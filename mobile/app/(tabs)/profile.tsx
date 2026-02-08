@@ -21,6 +21,7 @@ export default function ProfileScreen() {
   const { signOut } = useAuth();
   const [profile, setProfile] = useState<UserResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -56,24 +57,36 @@ export default function ProfileScreen() {
     });
 
     if (!result.canceled && result.assets[0]) {
+      setUploading(true);
       try {
         await uploadPhoto(result.assets[0].uri);
         await loadProfile();
       } catch (err) {
         console.error("Failed to upload photo:", err);
         Alert.alert("Error", "Failed to upload photo.");
+      } finally {
+        setUploading(false);
       }
     }
   }
 
   async function handleDeletePhoto(photoId: string) {
-    try {
-      await deletePhoto(photoId);
-      await loadProfile();
-    } catch (err) {
-      console.error("Failed to delete photo:", err);
-      Alert.alert("Error", "Failed to delete photo.");
-    }
+    Alert.alert("Delete Photo", "Are you sure you want to delete this photo?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await deletePhoto(photoId);
+            await loadProfile();
+          } catch (err) {
+            console.error("Failed to delete photo:", err);
+            Alert.alert("Error", "Failed to delete photo.");
+          }
+        },
+      },
+    ]);
   }
 
   async function handleSignOut() {
@@ -161,8 +174,16 @@ export default function ProfileScreen() {
               </View>
             ))}
           </View>
-          <TouchableOpacity style={styles.addPhotoButton} onPress={handleAddPhoto}>
-            <Text style={styles.addPhotoText}>Add Photo</Text>
+          <TouchableOpacity
+            style={[styles.addPhotoButton, uploading && styles.addPhotoDisabled]}
+            onPress={handleAddPhoto}
+            disabled={uploading}
+          >
+            {uploading ? (
+              <ActivityIndicator size="small" color="#e91e63" />
+            ) : (
+              <Text style={styles.addPhotoText}>Add Photo</Text>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -205,6 +226,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   addPhotoText: { color: "#e91e63", fontWeight: "600" },
+  addPhotoDisabled: { opacity: 0.5 },
   signOutButton: {
     backgroundColor: "#f0f0f0",
     borderRadius: 8,

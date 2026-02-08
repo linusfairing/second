@@ -26,6 +26,7 @@ export default function OnboardingScreen() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const flatListRef = useRef<FlatList>(null);
+  const nextIdRef = useRef(0);
 
   useEffect(() => {
     loadHistory();
@@ -56,7 +57,7 @@ export default function OnboardingScreen() {
     if (!msg || sending) return;
 
     const userMsg: Message = {
-      id: Date.now().toString(),
+      id: `local-${nextIdRef.current++}`,
       role: "user",
       content: msg,
     };
@@ -67,7 +68,7 @@ export default function OnboardingScreen() {
     try {
       const res = await sendChatMessage(msg);
       const aiMsg: Message = {
-        id: (Date.now() + 1).toString(),
+        id: `local-${nextIdRef.current++}`,
         role: "assistant",
         content: res.reply,
       };
@@ -79,7 +80,7 @@ export default function OnboardingScreen() {
     } catch (err) {
       console.error("Failed to send chat message:", err);
       const errMsg: Message = {
-        id: (Date.now() + 1).toString(),
+        id: `local-${nextIdRef.current++}`,
         role: "assistant",
         content: "Something went wrong. Please try again.",
       };

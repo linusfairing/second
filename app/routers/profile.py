@@ -172,8 +172,9 @@ def delete_photo(
 
     was_primary = photo.is_primary
 
-    file_path = Path("uploads") / photo.file_path
-    if file_path.exists():
+    uploads_root = Path("uploads").resolve()
+    file_path = (uploads_root / photo.file_path).resolve()
+    if file_path.is_relative_to(uploads_root) and file_path.exists():
         file_path.unlink()
 
     db.delete(photo)

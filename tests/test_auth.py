@@ -16,7 +16,7 @@ class TestSignup:
         client.post("/api/v1/auth/signup", json=payload)
         r = client.post("/api/v1/auth/signup", json=payload)
         assert r.status_code == 409
-        assert "already registered" in r.json()["detail"]
+        assert r.json()["detail"] == "Registration failed"
 
     def test_short_password_returns_422(self, client):
         r = client.post("/api/v1/auth/signup", json={

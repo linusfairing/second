@@ -76,13 +76,19 @@ def get_or_create_state(db: Session, user_id: str) -> ConversationState:
     return state
 
 
-def get_conversation_history(db: Session, user_id: str) -> list[ConversationMessage]:
-    return (
+def get_conversation_history(
+    db: Session, user_id: str, limit: int | None = None, offset: int = 0
+) -> list[ConversationMessage]:
+    q = (
         db.query(ConversationMessage)
         .filter(ConversationMessage.user_id == user_id)
         .order_by(ConversationMessage.created_at)
-        .all()
     )
+    if offset:
+        q = q.offset(offset)
+    if limit is not None:
+        q = q.limit(limit)
+    return q.all()
 
 
 def _extract_profile_updates(content: str) -> dict:
@@ -154,7 +160,10 @@ def _apply_profile_updates(db: Session, user_id: str, updates: dict) -> None:
 
 
 def _advance_topic(db: Session, state: ConversationState, ai_response: str) -> None:
-    topics_completed = json.loads(state.topics_completed) if state.topics_completed else []
+    try:
+        topics_completed = json.loads(state.topics_completed) if state.topics_completed else []
+    except (json.JSONDecodeError, TypeError):
+        topics_completed = []
 
     if "[TOPIC_COMPLETE]" in ai_response or "[ONBOARDING_COMPLETE]" in ai_response:
         if state.current_topic not in topics_completed:

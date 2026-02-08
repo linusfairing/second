@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -17,17 +17,27 @@ export default function DiscoverScreen() {
   const [users, setUsers] = useState<DiscoverUserResponse[]>([]);
   const [index, setIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [acting, setActing] = useState(false);
   const [matchAlert, setMatchAlert] = useState<string | null>(null);
+  const matchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => {
+    return () => {
+      if (matchTimerRef.current) clearTimeout(matchTimerRef.current);
+    };
+  }, []);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
+    setError(false);
     try {
       const res = await getDiscoverUsers();
       setUsers(res.users);
       setIndex(0);
     } catch (err) {
       console.error("Failed to load discover users:", err);
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -46,7 +56,7 @@ export default function DiscoverScreen() {
       const res = await likeUser(currentUser.id);
       if (res.is_match) {
         setMatchAlert(currentUser.display_name || "Someone");
-        setTimeout(() => setMatchAlert(null), 2500);
+        matchTimerRef.current = setTimeout(() => setMatchAlert(null), 2500);
       }
       advance();
     } catch (err) {
@@ -81,6 +91,17 @@ export default function DiscoverScreen() {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#e91e63" />
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.errorText}>Something went wrong</Text>
+        <TouchableOpacity style={styles.refreshButton} onPress={loadUsers}>
+          <Text style={styles.refreshText}>Retry</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -196,6 +217,7 @@ const styles = StyleSheet.create({
   likeButton: { backgroundColor: "#e91e63" },
   passButtonText: { fontSize: 16, fontWeight: "600", color: "#888" },
   likeButtonText: { fontSize: 16, fontWeight: "600", color: "#fff" },
+  errorText: { fontSize: 16, color: "#e91e63", marginBottom: 16 },
   emptyText: { fontSize: 16, color: "#888", marginBottom: 16 },
   refreshButton: {
     backgroundColor: "#e91e63",

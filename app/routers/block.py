@@ -1,11 +1,11 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db, get_current_user
 from app.models.user import User
-from app.models.match import Match
+from app.models.match import Like, Match
 from app.models.message import DirectMessage
 from app.models.block import BlockedUser
 from app.schemas.block import BlockRequest, BlockResponse, BlockedUserResponse
@@ -36,6 +36,12 @@ def block_user(
 
     block = BlockedUser(blocker_id=current_user.id, blocked_id=request.blocked_user_id)
     db.add(block)
+
+    # Clean up likes between the two users
+    db.query(Like).filter(
+        ((Like.liker_id == current_user.id) & (Like.liked_id == request.blocked_user_id))
+        | ((Like.liker_id == request.blocked_user_id) & (Like.liked_id == current_user.id))
+    ).delete(synchronize_session="fetch")
 
     # Auto-unmatch
     auto_unmatched = False
@@ -73,6 +79,8 @@ def unblock_user(
 
 @router.get("", response_model=list[BlockedUserResponse])
 def list_blocked_users(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -80,6 +88,8 @@ def list_blocked_users(
         db.query(BlockedUser)
         .filter(BlockedUser.blocker_id == current_user.id)
         .order_by(BlockedUser.created_at.desc())
+        .offset(offset)
+        .limit(limit)
         .all()
     )
     return [

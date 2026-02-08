@@ -17,7 +17,7 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
     email = request.email.lower()
     existing = db.query(User).filter(User.email == email).first()
     if existing:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Registration failed")
 
     user = User(
         email=email,
@@ -35,7 +35,12 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse)
 def login(request: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == request.email.lower()).first()
-    if not user or not verify_password(request.password, user.hashed_password):
+    if not user:
+        # Run hash anyway to prevent timing-based user enumeration
+        hash_password("dummy-password")
+        logger.warning("Failed login attempt for email: %s", request.email)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+    if not verify_password(request.password, user.hashed_password):
         logger.warning("Failed login attempt for email: %s", request.email)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 

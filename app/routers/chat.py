@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db, get_current_user
@@ -39,10 +39,12 @@ def send_chat_message(
 
 @router.get("/history", response_model=list[ChatMessageResponse])
 def get_chat_history(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    messages = get_conversation_history(db, current_user.id)
+    messages = get_conversation_history(db, current_user.id, limit=limit, offset=offset)
     return [ChatMessageResponse.model_validate(m) for m in messages]
 
 
@@ -52,7 +54,10 @@ def get_chat_status(
     db: Session = Depends(get_db),
 ):
     state = get_or_create_state(db, current_user.id)
-    topics_completed = json.loads(state.topics_completed) if state.topics_completed else []
+    try:
+        topics_completed = json.loads(state.topics_completed) if state.topics_completed else []
+    except (json.JSONDecodeError, TypeError):
+        topics_completed = []
 
     profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
     completeness = profile.profile_completeness if profile else 0.0

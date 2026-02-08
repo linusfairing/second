@@ -18,6 +18,7 @@ export default function MatchesScreen() {
   const router = useRouter();
   const [matches, setMatches] = useState<MatchResponse[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -27,11 +28,13 @@ export default function MatchesScreen() {
 
   async function loadMatches() {
     setLoading(true);
+    setError(false);
     try {
       const res = await getMatches();
       setMatches(res.matches);
     } catch (err) {
       console.error("Failed to load matches:", err);
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -83,7 +86,14 @@ export default function MatchesScreen() {
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <Text style={styles.title}>Matches</Text>
-      {matches.length === 0 ? (
+      {error ? (
+        <View style={styles.center}>
+          <Text style={styles.errorText}>Something went wrong</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={loadMatches}>
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : matches.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.emptyText}>No matches yet. Keep swiping!</Text>
         </View>
@@ -127,5 +137,13 @@ const styles = StyleSheet.create({
   matchInfo: { flex: 1, marginLeft: 12 },
   matchName: { fontSize: 16, fontWeight: "600" },
   matchBio: { fontSize: 13, color: "#888", marginTop: 2 },
+  errorText: { fontSize: 15, color: "#e91e63", marginBottom: 16 },
+  retryButton: {
+    backgroundColor: "#e91e63",
+    borderRadius: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+  },
+  retryText: { color: "#fff", fontWeight: "600" },
   emptyText: { fontSize: 15, color: "#888" },
 });

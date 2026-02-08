@@ -16,13 +16,16 @@ import { useAuth } from "../../src/context/AuthContext";
 import { MessageResponse } from "../../src/types/api";
 
 export default function MessagesScreen() {
-  const { matchId } = useLocalSearchParams<{ matchId: string }>();
+  const params = useLocalSearchParams<{ matchId: string }>();
+  const matchId = Array.isArray(params.matchId) ? params.matchId[0] : params.matchId;
   const { userId } = useAuth();
   const [messages, setMessages] = useState<MessageResponse[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [sending, setSending] = useState(false);
   const flatListRef = useRef<FlatList>(null);
+  const nextIdRef = useRef(0);
 
   useEffect(() => {
     loadMessages();
@@ -31,11 +34,13 @@ export default function MessagesScreen() {
   async function loadMessages() {
     if (!matchId) return;
     setLoading(true);
+    setError(false);
     try {
       const data = await getMessages(matchId);
       setMessages(data);
     } catch (err) {
       console.error("Failed to load messages:", err);
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -46,7 +51,7 @@ export default function MessagesScreen() {
     if (!text || !matchId || sending) return;
 
     const optimistic: MessageResponse = {
-      id: Date.now().toString(),
+      id: `optimistic-${nextIdRef.current++}`,
       match_id: matchId,
       sender_id: userId || "",
       content: text,
@@ -90,6 +95,17 @@ export default function MessagesScreen() {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#e91e63" />
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.errorText}>Failed to load messages</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={loadMessages}>
+          <Text style={styles.retryText}>Retry</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -179,4 +195,12 @@ const styles = StyleSheet.create({
   },
   sendDisabled: { opacity: 0.5 },
   sendText: { color: "#fff", fontWeight: "600" },
+  errorText: { fontSize: 15, color: "#e91e63", marginBottom: 16 },
+  retryButton: {
+    backgroundColor: "#e91e63",
+    borderRadius: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+  },
+  retryText: { color: "#fff", fontWeight: "600" },
 });

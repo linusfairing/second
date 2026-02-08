@@ -109,13 +109,14 @@ def discover(
             unique.append(c)
 
     # ── Python-level gender-preference filter (requires JSON parsing) ────
-    user_gender_pref = json.loads(current_user.gender_preference) if current_user.gender_preference else None
+    from app.utils.profile_builder import _safe_json_loads
+    user_gender_pref = _safe_json_loads(current_user.gender_preference)
 
     scored: list[tuple[User, float]] = []
     for c in unique:
         if user_gender_pref and c.gender and c.gender not in user_gender_pref:
             continue
-        c_pref = json.loads(c.gender_preference) if c.gender_preference else None
+        c_pref = _safe_json_loads(c.gender_preference)
         if c_pref and current_user.gender and current_user.gender not in c_pref:
             continue
 

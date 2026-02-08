@@ -1,15 +1,15 @@
 from datetime import date, datetime
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class UserUpdate(BaseModel):
-    display_name: str | None = None
+    display_name: str | None = Field(None, max_length=100)
     date_of_birth: date | None = None
-    gender: str | None = None
+    gender: str | None = Field(None, max_length=30)
     gender_preference: list[str] | None = None
-    location: str | None = None
-    age_range_min: int | None = None
-    age_range_max: int | None = None
+    location: str | None = Field(None, max_length=100)
+    age_range_min: int | None = Field(None, ge=18, le=120)
+    age_range_max: int | None = Field(None, ge=18, le=120)
 
     @model_validator(mode="after")
     def check_age_range(self):
@@ -20,12 +20,12 @@ class UserUpdate(BaseModel):
 
 
 class ProfileUpdate(BaseModel):
-    bio: str | None = None
+    bio: str | None = Field(None, max_length=2000)
     interests: list[str] | None = None
     values: list[str] | None = None
     personality_traits: list[str] | None = None
-    relationship_goals: str | None = None
-    communication_style: str | None = None
+    relationship_goals: str | None = Field(None, max_length=200)
+    communication_style: str | None = Field(None, max_length=200)
 
 
 class PhotoResponse(BaseModel):
@@ -40,9 +40,9 @@ class PhotoResponse(BaseModel):
 
 class ProfileDataResponse(BaseModel):
     bio: str | None = None
-    interests: list | None = None
-    values: list | None = None
-    personality_traits: list | None = None
+    interests: list[str] | None = None
+    values: list[str] | None = None
+    personality_traits: list[str] | None = None
     relationship_goals: str | None = None
     communication_style: str | None = None
     profile_completeness: float = 0.0
