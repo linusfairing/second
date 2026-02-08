@@ -80,7 +80,7 @@ def discover(
 
     # Location (exact-match, skip when either side is NULL)
     if current_user.location:
-        q = q.filter(or_(User.location == None, User.location == current_user.location))  # noqa: E711
+        q = q.filter(or_(User.location.is_(None), User.location == current_user.location))
 
     # Bidirectional age-range
     if current_user.date_of_birth:
@@ -91,7 +91,7 @@ def discover(
         max_dob = _safe_date(today.year - current_user.age_range_min, today.month, today.day)
         min_dob_cutoff = _safe_date(today.year - current_user.age_range_max - 1, today.month, today.day)
         q = q.filter(or_(
-            User.date_of_birth == None,  # noqa: E711
+            User.date_of_birth.is_(None),
             and_(User.date_of_birth > min_dob_cutoff, User.date_of_birth <= max_dob),
         ))
 

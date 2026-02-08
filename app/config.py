@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./dating_app.db"
     SECRET_KEY: str = "your-secret-key-change-in-production"
     OPENAI_API_KEY: str = ""
-    CORS_ORIGINS: str = '["http://localhost:3000"]'
+    CORS_ORIGINS: str = '["http://localhost:3000","http://localhost:8081","http://localhost:19006"]'
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
 

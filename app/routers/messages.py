@@ -29,7 +29,10 @@ def get_messages(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _validate_match_membership(db, match_id, current_user.id)
+    match = _validate_match_membership(db, match_id, current_user.id)
+
+    other_id = match.user2_id if match.user1_id == current_user.id else match.user1_id
+    check_block(db, current_user.id, other_id, detail="Cannot view messages with blocked user")
 
     messages = (
         db.query(DirectMessage)

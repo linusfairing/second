@@ -45,6 +45,12 @@ def update_my_profile(
     if update.age_range_max is not None:
         current_user.age_range_max = update.age_range_max
 
+    if current_user.age_range_min > current_user.age_range_max:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="age_range_min must not exceed age_range_max",
+        )
+
     db.commit()
     db.refresh(current_user)
     return build_user_response(current_user)

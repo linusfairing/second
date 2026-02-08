@@ -1,0 +1,46 @@
+import { useEffect } from "react";
+import { ActivityIndicator, View } from "react-native";
+import { Slot, useRouter, useSegments } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
+import { AuthProvider, useAuth } from "../src/context/AuthContext";
+
+SplashScreen.preventAutoHideAsync();
+
+function AuthGuard() {
+  const { token, isLoading, onboardingComplete } = useAuth();
+  const segments = useSegments();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (isLoading) return;
+
+    const inAuth = segments[0] === "auth";
+    const inOnboarding = segments[0] === "onboarding";
+
+    if (!token) {
+      if (!inAuth) router.replace("/auth/login");
+    } else if (!onboardingComplete) {
+      if (!inOnboarding) router.replace("/onboarding");
+    } else {
+      if (inAuth || inOnboarding) router.replace("/(tabs)/discover");
+    }
+  }, [token, isLoading, onboardingComplete, segments]);
+
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
+
+  return <Slot />;
+}
+
+export default function RootLayout() {
+  return (
+    <AuthProvider>
+      <AuthGuard />
+    </AuthProvider>
+  );
+}
