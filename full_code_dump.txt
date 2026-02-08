@@ -1,0 +1,3293 @@
+========== app/__init__.py ==========
+
+========== app/config.py ==========
+import json
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    DATABASE_URL: str = "sqlite:///./dating_app.db"
+    SECRET_KEY: str = "your-secret-key-change-in-production"
+    OPENAI_API_KEY: str = ""
+    CORS_ORIGINS: str = '["http://localhost:3000"]'
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return json.loads(self.CORS_ORIGINS)
+
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
+
+settings = Settings()
+
+========== app/database.py ==========
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
+
+from app.config import settings
+
+connect_args = {}
+if settings.DATABASE_URL.startswith("sqlite"):
+    connect_args["check_same_thread"] = False
+
+engine = create_engine(settings.DATABASE_URL, connect_args=connect_args)
+
+# Enable WAL mode and foreign keys for SQLite
+if settings.DATABASE_URL.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+class Base(DeclarativeBase):
+    pass
+
+========== app/dependencies.py ==========
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
+
+from app.database import SessionLocal
+from app.models.user import User
+from app.models.block import BlockedUser
+from app.services.auth_service import decode_access_token
+
+security = HTTPBearer()
+
+ACTIVE_EXEMPT_PATHS = {"/api/v1/account/reactivate", "/api/v1/account/status"}
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def get_current_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+) -> User:
+    token = credentials.credentials
+    user_id = decode_access_token(token)
+    if user_id is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if not user.is_active and request.url.path not in ACTIVE_EXEMPT_PATHS:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is deactivated")
+    return user
+
+
+def check_block(db: Session, user1_id: str, user2_id: str, detail: str = "Cannot interact with blocked user") -> None:
+    """Raise 403 if a block exists in either direction between the two users."""
+    block = db.query(BlockedUser).filter(
+        ((BlockedUser.blocker_id == user1_id) & (BlockedUser.blocked_id == user2_id))
+        | ((BlockedUser.blocker_id == user2_id) & (BlockedUser.blocked_id == user1_id))
+    ).first()
+    if block:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
+========== app/main.py ==========
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from app.config import settings
+from app.database import engine, Base
+from app.models import User, UserPhoto, UserProfile, ConversationMessage, ConversationState, Like, Match, DirectMessage, BlockedUser  # noqa: F401
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if settings.SECRET_KEY == "your-secret-key-change-in-production":
+        logger.warning("SECRET_KEY is using the insecure default value. Set a secure key via environment variable.")
+    Base.metadata.create_all(bind=engine)
+    uploads_dir = Path("uploads")
+    uploads_dir.mkdir(exist_ok=True)
+    yield
+
+
+app = FastAPI(title="AI Dating App", version="1.0.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+from app.routers import auth, profile, chat, discover, matches, messages, block, account  # noqa: E402
+
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
+app.include_router(profile.router, prefix="/api/v1/profile", tags=["profile"])
+app.include_router(chat.router, prefix="/api/v1/chat", tags=["chat"])
+app.include_router(discover.router, prefix="/api/v1/discover", tags=["discover"])
+app.include_router(matches.router, prefix="/api/v1/matches", tags=["matches"])
+app.include_router(messages.router, prefix="/api/v1/matches", tags=["messages"])
+app.include_router(block.router, prefix="/api/v1/block", tags=["block"])
+app.include_router(account.router, prefix="/api/v1/account", tags=["account"])
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
+========== app/models/__init__.py ==========
+from app.models.user import User, UserPhoto
+from app.models.profile import UserProfile
+from app.models.conversation import ConversationMessage, ConversationState
+from app.models.match import Like, Match
+from app.models.message import DirectMessage
+from app.models.block import BlockedUser
+
+========== app/models/block.py ==========
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import String, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base
+
+
+class BlockedUser(Base):
+    __tablename__ = "blocked_users"
+    __table_args__ = (UniqueConstraint("blocker_id", "blocked_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    blocker_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    blocked_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+========== app/models/conversation.py ==========
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import String, Text, DateTime, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)  # "user" or "assistant"
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    topic: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ConversationState(Base):
+    __tablename__ = "conversation_state"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), unique=True, nullable=False)
+    current_topic: Mapped[str] = mapped_column(String(50), default="greeting")
+    topics_completed: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    onboarding_status: Mapped[str] = mapped_column(String(20), default="in_progress")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+========== app/models/match.py ==========
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import String, Boolean, Float, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base
+
+
+class Like(Base):
+    __tablename__ = "likes"
+    __table_args__ = (UniqueConstraint("liker_id", "liked_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    liker_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    liked_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    is_pass: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class Match(Base):
+    __tablename__ = "matches"
+    __table_args__ = (UniqueConstraint("user1_id", "user2_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user1_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    user2_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    compatibility_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+========== app/models/message.py ==========
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import String, Text, DateTime, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base
+
+
+class DirectMessage(Base):
+    __tablename__ = "direct_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    match_id: Mapped[str] = mapped_column(String(36), ForeignKey("matches.id"), nullable=False, index=True)
+    sender_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+========== app/models/profile.py ==========
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import String, Text, Float, DateTime, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.database import Base
+
+
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), unique=True, nullable=False)
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    interests: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    values: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    personality_traits: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON dict/array
+    relationship_goals: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
+    communication_style: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
+    profile_completeness: Mapped[float] = mapped_column(Float, default=0.0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    user: Mapped["User"] = relationship("User", back_populates="profile")
+
+
+from app.models.user import User  # noqa: E402, F401
+
+========== app/models/user.py ==========
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import String, Boolean, Integer, Date, Text, DateTime, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.database import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    date_of_birth: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    gender: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    gender_preference: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    location: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    age_range_min: Mapped[int] = mapped_column(Integer, default=18)
+    age_range_max: Mapped[int] = mapped_column(Integer, default=99)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    photos: Mapped[list["UserPhoto"]] = relationship("UserPhoto", back_populates="user", cascade="all, delete-orphan")
+    profile: Mapped["UserProfile"] = relationship("UserProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+
+
+class UserPhoto(Base):
+    __tablename__ = "user_photos"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user: Mapped["User"] = relationship("User", back_populates="photos")
+
+
+# Avoid circular import — forward ref resolved by SQLAlchemy
+from app.models.profile import UserProfile  # noqa: E402, F401
+
+========== app/routers/__init__.py ==========
+
+========== app/routers/account.py ==========
+import logging
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+from app.dependencies import get_db, get_current_user
+from app.models.user import User
+from app.schemas.account import AccountStatusResponse
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+
+@router.post("/deactivate", response_model=AccountStatusResponse)
+def deactivate_account(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    current_user.is_active = False
+    db.commit()
+    db.refresh(current_user)
+    logger.info("Account deactivated: %s", current_user.email)
+    return AccountStatusResponse(is_active=current_user.is_active, email=current_user.email, created_at=current_user.created_at)
+
+
+@router.post("/reactivate", response_model=AccountStatusResponse)
+def reactivate_account(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    current_user.is_active = True
+    db.commit()
+    db.refresh(current_user)
+    logger.info("Account reactivated: %s", current_user.email)
+    return AccountStatusResponse(is_active=current_user.is_active, email=current_user.email, created_at=current_user.created_at)
+
+
+@router.get("/status", response_model=AccountStatusResponse)
+def account_status(current_user: User = Depends(get_current_user)):
+    return AccountStatusResponse(is_active=current_user.is_active, email=current_user.email, created_at=current_user.created_at)
+
+========== app/routers/auth.py ==========
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.dependencies import get_db
+from app.models.user import User
+from app.schemas.auth import SignupRequest, LoginRequest, TokenResponse
+from app.services.auth_service import hash_password, verify_password, create_access_token
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+
+@router.post("/signup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+def signup(request: SignupRequest, db: Session = Depends(get_db)):
+    email = request.email.lower()
+    existing = db.query(User).filter(User.email == email).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+
+    user = User(
+        email=email,
+        hashed_password=hash_password(request.password),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    logger.info("New user signup: %s", user.email)
+    token = create_access_token(user.id)
+    return TokenResponse(access_token=token, user_id=user.id, is_active=user.is_active)
+
+
+@router.post("/login", response_model=TokenResponse)
+def login(request: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == request.email.lower()).first()
+    if not user or not verify_password(request.password, user.hashed_password):
+        logger.warning("Failed login attempt for email: %s", request.email)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+
+    logger.info("User login: %s (active=%s)", user.email, user.is_active)
+    token = create_access_token(user.id)
+    return TokenResponse(access_token=token, user_id=user.id, is_active=user.is_active)
+
+========== app/routers/block.py ==========
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.dependencies import get_db, get_current_user
+from app.models.user import User
+from app.models.match import Match
+from app.models.message import DirectMessage
+from app.models.block import BlockedUser
+from app.schemas.block import BlockRequest, BlockResponse, BlockedUserResponse
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+
+@router.post("", response_model=BlockResponse, status_code=status.HTTP_201_CREATED)
+def block_user(
+    request: BlockRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if request.blocked_user_id == current_user.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot block yourself")
+
+    target = db.query(User).filter(User.id == request.blocked_user_id).first()
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    existing = db.query(BlockedUser).filter(
+        BlockedUser.blocker_id == current_user.id,
+        BlockedUser.blocked_id == request.blocked_user_id,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already blocked")
+
+    block = BlockedUser(blocker_id=current_user.id, blocked_id=request.blocked_user_id)
+    db.add(block)
+
+    # Auto-unmatch
+    auto_unmatched = False
+    user1 = min(current_user.id, request.blocked_user_id)
+    user2 = max(current_user.id, request.blocked_user_id)
+    match = db.query(Match).filter(Match.user1_id == user1, Match.user2_id == user2).first()
+    if match:
+        db.query(DirectMessage).filter(DirectMessage.match_id == match.id).delete()
+        db.delete(match)
+        auto_unmatched = True
+
+    db.commit()
+    logger.info("User %s blocked %s (auto_unmatched=%s)", current_user.id, request.blocked_user_id, auto_unmatched)
+
+    return BlockResponse(blocked_user_id=request.blocked_user_id, auto_unmatched=auto_unmatched)
+
+
+@router.delete("/{blocked_user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def unblock_user(
+    blocked_user_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    block = db.query(BlockedUser).filter(
+        BlockedUser.blocker_id == current_user.id,
+        BlockedUser.blocked_id == blocked_user_id,
+    ).first()
+    if not block:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Block not found")
+
+    db.delete(block)
+    db.commit()
+    logger.info("User %s unblocked %s", current_user.id, blocked_user_id)
+
+
+@router.get("", response_model=list[BlockedUserResponse])
+def list_blocked_users(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    blocks = (
+        db.query(BlockedUser)
+        .filter(BlockedUser.blocker_id == current_user.id)
+        .order_by(BlockedUser.created_at.desc())
+        .all()
+    )
+    return [
+        BlockedUserResponse(id=b.id, blocked_user_id=b.blocked_id, created_at=b.created_at)
+        for b in blocks
+    ]
+
+========== app/routers/chat.py ==========
+import json
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.dependencies import get_db, get_current_user
+from app.models.user import User
+from app.models.profile import UserProfile
+from app.schemas.chat import ChatRequest, ChatResponse, ChatMessageResponse, ChatStatusResponse
+from app.services.chat_service import process_message, get_conversation_history, get_or_create_state
+from app.utils.rate_limiter import chat_rate_limiter
+
+router = APIRouter()
+
+
+@router.post("", response_model=ChatResponse)
+def send_chat_message(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    chat_rate_limiter.check(current_user.id)
+
+    state = get_or_create_state(db, current_user.id)
+    if state.onboarding_status == "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Onboarding already completed. Use your profile to make changes.",
+        )
+
+    reply = process_message(db, current_user.id, request.message)
+
+    return ChatResponse(
+        reply=reply,
+        current_topic=state.current_topic,
+        onboarding_status=state.onboarding_status,
+    )
+
+
+@router.get("/history", response_model=list[ChatMessageResponse])
+def get_chat_history(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    messages = get_conversation_history(db, current_user.id)
+    return [ChatMessageResponse.model_validate(m) for m in messages]
+
+
+@router.get("/status", response_model=ChatStatusResponse)
+def get_chat_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    state = get_or_create_state(db, current_user.id)
+    topics_completed = json.loads(state.topics_completed) if state.topics_completed else []
+
+    profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
+    completeness = profile.profile_completeness if profile else 0.0
+
+    return ChatStatusResponse(
+        current_topic=state.current_topic,
+        topics_completed=topics_completed,
+        onboarding_status=state.onboarding_status,
+        profile_completeness=completeness,
+    )
+
+========== app/routers/discover.py ==========
+import json
+from datetime import date
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_, and_
+from sqlalchemy.orm import Session, joinedload
+
+from app.dependencies import get_db, get_current_user
+from app.models.user import User
+from app.models.conversation import ConversationState
+from app.models.match import Like, Match
+from app.models.block import BlockedUser
+from app.schemas.discover import DiscoverResponse
+from app.services.matching_service import calculate_compatibility
+from app.utils.profile_builder import build_discover_user
+
+router = APIRouter()
+
+
+def _calculate_age(dob: date) -> int:
+    today = date.today()
+    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+
+
+def _safe_date(year: int, month: int, day: int) -> date:
+    """Handle Feb 29 → Feb 28 for non-leap years."""
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return date(year, month, day - 1)
+
+
+@router.get("", response_model=DiscoverResponse)
+def discover(
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Check onboarding status
+    state = db.query(ConversationState).filter(ConversationState.user_id == current_user.id).first()
+    if not state or state.onboarding_status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Complete onboarding chat before discovering users",
+        )
+
+    # ── SQL-level filtering ──────────────────────────────────────────────
+    q = (
+        db.query(User)
+        .options(joinedload(User.profile), joinedload(User.photos))
+        .filter(
+            User.id != current_user.id,
+            User.is_active == True,  # noqa: E712
+        )
+    )
+
+    # Must have completed onboarding
+    q = q.filter(User.id.in_(
+        db.query(ConversationState.user_id)
+        .filter(ConversationState.onboarding_status == "completed")
+    ))
+
+    # Exclude liked / passed
+    q = q.filter(~User.id.in_(
+        db.query(Like.liked_id).filter(Like.liker_id == current_user.id)
+    ))
+
+    # Exclude matched (both FK columns)
+    q = q.filter(
+        ~User.id.in_(db.query(Match.user2_id).filter(Match.user1_id == current_user.id)),
+        ~User.id.in_(db.query(Match.user1_id).filter(Match.user2_id == current_user.id)),
+    )
+
+    # Exclude blocked (both directions)
+    q = q.filter(
+        ~User.id.in_(db.query(BlockedUser.blocked_id).filter(BlockedUser.blocker_id == current_user.id)),
+        ~User.id.in_(db.query(BlockedUser.blocker_id).filter(BlockedUser.blocked_id == current_user.id)),
+    )
+
+    # Location (exact-match, skip when either side is NULL)
+    if current_user.location:
+        q = q.filter(or_(User.location == None, User.location == current_user.location))  # noqa: E711
+
+    # Bidirectional age-range
+    if current_user.date_of_birth:
+        my_age = _calculate_age(current_user.date_of_birth)
+        today = date.today()
+
+        # Candidate's DOB must put their age inside my [min, max]
+        max_dob = _safe_date(today.year - current_user.age_range_min, today.month, today.day)
+        min_dob_cutoff = _safe_date(today.year - current_user.age_range_max - 1, today.month, today.day)
+        q = q.filter(or_(
+            User.date_of_birth == None,  # noqa: E711
+            and_(User.date_of_birth > min_dob_cutoff, User.date_of_birth <= max_dob),
+        ))
+
+        # My age must be inside candidate's [min, max]
+        q = q.filter(User.age_range_min <= my_age, User.age_range_max >= my_age)
+
+    candidates = q.all()
+
+    # Deduplicate (joinedload on collections can produce duplicate rows)
+    seen: set[str] = set()
+    unique: list[User] = []
+    for c in candidates:
+        if c.id not in seen:
+            seen.add(c.id)
+            unique.append(c)
+
+    # ── Python-level gender-preference filter (requires JSON parsing) ────
+    user_gender_pref = json.loads(current_user.gender_preference) if current_user.gender_preference else None
+
+    scored: list[tuple[User, float]] = []
+    for c in unique:
+        if user_gender_pref and c.gender and c.gender not in user_gender_pref:
+            continue
+        c_pref = json.loads(c.gender_preference) if c.gender_preference else None
+        if c_pref and current_user.gender and current_user.gender not in c_pref:
+            continue
+
+        score = calculate_compatibility(current_user.profile, c.profile)
+        scored.append((c, score))
+
+    # Sort by compatibility and paginate
+    scored.sort(key=lambda x: x[1], reverse=True)
+    total = len(scored)
+    page = scored[offset:offset + limit]
+
+    users = [build_discover_user(c, s) for c, s in page]
+    return DiscoverResponse(users=users, total=total, limit=limit, offset=offset)
+
+========== app/routers/matches.py ==========
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
+from app.dependencies import get_db, get_current_user, check_block
+from app.models.user import User
+from app.models.profile import UserProfile
+from app.models.match import Like, Match
+from app.models.message import DirectMessage
+from app.schemas.match import LikeRequest, LikeResponse, PassRequest, PassResponse, MatchResponse, MatchListResponse
+from app.services.matching_service import calculate_compatibility
+from app.utils.profile_builder import build_discover_user
+
+router = APIRouter()
+
+
+@router.post("/like", response_model=LikeResponse)
+def like_user(
+    request: LikeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if request.liked_user_id == current_user.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot like yourself")
+
+    target = db.query(User).filter(User.id == request.liked_user_id).first()
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    check_block(db, current_user.id, request.liked_user_id)
+
+    existing = db.query(Like).filter(
+        Like.liker_id == current_user.id, Like.liked_id == request.liked_user_id
+    ).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already liked/passed this user")
+
+    like = Like(liker_id=current_user.id, liked_id=request.liked_user_id, is_pass=False)
+    db.add(like)
+
+    # Check for mutual like (same transaction — nothing committed yet)
+    db.flush()
+    mutual = db.query(Like).filter(
+        Like.liker_id == request.liked_user_id,
+        Like.liked_id == current_user.id,
+        Like.is_pass == False,  # noqa: E712
+    ).first()
+
+    match_id = None
+    is_match = False
+
+    if mutual:
+        user1 = min(current_user.id, request.liked_user_id)
+        user2 = max(current_user.id, request.liked_user_id)
+
+        existing_match = db.query(Match).filter(
+            Match.user1_id == user1, Match.user2_id == user2
+        ).first()
+
+        if not existing_match:
+            my_profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
+            their_profile = db.query(UserProfile).filter(UserProfile.user_id == request.liked_user_id).first()
+            score = calculate_compatibility(my_profile, their_profile)
+
+            match = Match(user1_id=user1, user2_id=user2, compatibility_score=round(score, 4))
+            db.add(match)
+            db.flush()
+            match_id = match.id
+            is_match = True
+
+    db.commit()
+    return LikeResponse(liked_user_id=request.liked_user_id, is_match=is_match, match_id=match_id)
+
+
+@router.post("/pass", response_model=PassResponse)
+def pass_user(
+    request: PassRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if request.passed_user_id == current_user.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot pass yourself")
+
+    target = db.query(User).filter(User.id == request.passed_user_id).first()
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    check_block(db, current_user.id, request.passed_user_id)
+
+    existing = db.query(Like).filter(
+        Like.liker_id == current_user.id, Like.liked_id == request.passed_user_id
+    ).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already liked/passed this user")
+
+    like = Like(liker_id=current_user.id, liked_id=request.passed_user_id, is_pass=True)
+    db.add(like)
+    db.commit()
+
+    return PassResponse(passed_user_id=request.passed_user_id)
+
+
+@router.get("", response_model=MatchListResponse)
+def list_matches(
+    limit: int = Query(20, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Match).filter(
+        (Match.user1_id == current_user.id) | (Match.user2_id == current_user.id)
+    ).order_by(Match.created_at.desc())
+
+    total = query.count()
+    matches_page = query.offset(offset).limit(limit).all()
+
+    # Batch-load all other users in one query to avoid N+1
+    other_ids = [
+        m.user2_id if m.user1_id == current_user.id else m.user1_id
+        for m in matches_page
+    ]
+    if other_ids:
+        others = db.query(User).filter(User.id.in_(other_ids)).all()
+        others_by_id = {u.id: u for u in others}
+    else:
+        others_by_id = {}
+
+    results = []
+    for m in matches_page:
+        other_id = m.user2_id if m.user1_id == current_user.id else m.user1_id
+        other_user = others_by_id.get(other_id)
+        if other_user:
+            score = m.compatibility_score or 0.0
+            results.append(MatchResponse(
+                id=m.id,
+                other_user=build_discover_user(other_user, score),
+                compatibility_score=m.compatibility_score,
+                created_at=m.created_at,
+            ))
+
+    return MatchListResponse(matches=results, total=total, limit=limit, offset=offset)
+
+
+@router.delete("/{match_id}", status_code=status.HTTP_204_NO_CONTENT)
+def unmatch(
+    match_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    match = db.query(Match).filter(Match.id == match_id).first()
+    if not match:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Match not found")
+
+    if current_user.id not in (match.user1_id, match.user2_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your match")
+
+    # Delete associated messages
+    db.query(DirectMessage).filter(DirectMessage.match_id == match_id).delete()
+    db.delete(match)
+    db.commit()
+
+========== app/routers/messages.py ==========
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
+from app.dependencies import get_db, get_current_user, check_block
+from app.models.user import User
+from app.models.match import Match
+from app.models.message import DirectMessage
+from app.schemas.message import SendMessageRequest, MessageResponse
+
+router = APIRouter()
+
+
+def _validate_match_membership(db: Session, match_id: str, user_id: str) -> Match:
+    match = db.query(Match).filter(Match.id == match_id).first()
+    if not match:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Match not found")
+    if user_id not in (match.user1_id, match.user2_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your match")
+    return match
+
+
+
+
+@router.get("/{match_id}/messages", response_model=list[MessageResponse])
+def get_messages(
+    match_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _validate_match_membership(db, match_id, current_user.id)
+
+    messages = (
+        db.query(DirectMessage)
+        .filter(DirectMessage.match_id == match_id)
+        .order_by(DirectMessage.created_at)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return [MessageResponse.model_validate(m) for m in messages]
+
+
+@router.post("/{match_id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+def send_message(
+    match_id: str,
+    request: SendMessageRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    match = _validate_match_membership(db, match_id, current_user.id)
+
+    # Check block between the two users in the match
+    other_id = match.user2_id if match.user1_id == current_user.id else match.user1_id
+    check_block(db, current_user.id, other_id, detail="Cannot message blocked user")
+
+    message = DirectMessage(
+        match_id=match_id,
+        sender_id=current_user.id,
+        content=request.content,
+    )
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+
+    return MessageResponse.model_validate(message)
+
+========== app/routers/profile.py ==========
+import json
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.dependencies import get_db, get_current_user
+from app.models.user import User, UserPhoto
+from app.models.profile import UserProfile
+from app.schemas.user import UserUpdate, ProfileUpdate, UserResponse, PhotoResponse, ProfileDataResponse
+from app.utils.profile_builder import build_user_response, build_profile_data
+
+router = APIRouter()
+
+MAX_PHOTOS = 6
+MAX_PHOTO_SIZE = 5 * 1024 * 1024  # 5 MB
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+
+
+@router.get("/me", response_model=UserResponse)
+def get_my_profile(current_user: User = Depends(get_current_user)):
+    return build_user_response(current_user)
+
+
+@router.put("/me", response_model=UserResponse)
+def update_my_profile(
+    update: UserUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if update.display_name is not None:
+        current_user.display_name = update.display_name
+    if update.date_of_birth is not None:
+        current_user.date_of_birth = update.date_of_birth
+    if update.gender is not None:
+        current_user.gender = update.gender
+    if update.gender_preference is not None:
+        current_user.gender_preference = json.dumps(update.gender_preference)
+    if update.location is not None:
+        current_user.location = update.location
+    if update.age_range_min is not None:
+        current_user.age_range_min = update.age_range_min
+    if update.age_range_max is not None:
+        current_user.age_range_max = update.age_range_max
+
+    db.commit()
+    db.refresh(current_user)
+    return build_user_response(current_user)
+
+
+@router.put("/me/profile", response_model=ProfileDataResponse)
+def update_my_profile_details(
+    update: ProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
+    if not profile:
+        profile = UserProfile(user_id=current_user.id)
+        db.add(profile)
+
+    if update.bio is not None:
+        profile.bio = update.bio
+    if update.interests is not None:
+        profile.interests = json.dumps(update.interests)
+    if update.values is not None:
+        profile.values = json.dumps(update.values)
+    if update.personality_traits is not None:
+        profile.personality_traits = json.dumps(update.personality_traits)
+    if update.relationship_goals is not None:
+        profile.relationship_goals = update.relationship_goals
+    if update.communication_style is not None:
+        profile.communication_style = update.communication_style
+
+    # Recalculate completeness
+    fields = ["bio", "interests", "values", "personality_traits", "relationship_goals", "communication_style"]
+    filled = sum(1 for f in fields if getattr(profile, f, None) is not None)
+    profile.profile_completeness = filled / len(fields)
+
+    db.commit()
+    db.refresh(profile)
+    # Refresh the user relationship so build_profile_data sees the updated profile
+    db.refresh(current_user)
+    return build_profile_data(current_user)
+
+
+@router.post("/me/photos", response_model=PhotoResponse, status_code=status.HTTP_201_CREATED)
+def upload_photo(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    photo_count = db.query(UserPhoto).filter(UserPhoto.user_id == current_user.id).count()
+    if photo_count >= MAX_PHOTOS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Maximum {MAX_PHOTOS} photos allowed")
+
+    # Validate content type
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be an image")
+
+    # Validate extension
+    ext = Path(file.filename).suffix.lower() if file.filename else ""
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be an image")
+
+    # Read and check size
+    content = file.file.read()
+    if len(content) > MAX_PHOTO_SIZE:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File exceeds 5 MB limit")
+
+    # Verify actual image content via magic bytes
+    IMAGE_SIGNATURES = {
+        b"\xff\xd8\xff": ".jpg",       # JPEG
+        b"\x89PNG\r\n\x1a\n": ".png",  # PNG
+        b"GIF87a": ".gif",             # GIF87a
+        b"GIF89a": ".gif",             # GIF89a
+    }
+    is_valid_image = any(content.startswith(sig) for sig in IMAGE_SIGNATURES)
+    # WebP: RIFF container with WEBP chunk at offset 8
+    if not is_valid_image and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        is_valid_image = True
+    if not is_valid_image:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File content is not a valid image")
+
+    # Sanitize filename
+    filename = f"{uuid.uuid4().hex}{ext}"
+    user_dir = Path("uploads") / current_user.id
+    user_dir.mkdir(parents=True, exist_ok=True)
+    file_path = user_dir / filename
+
+    file_path.write_bytes(content)
+
+    relative_path = f"{current_user.id}/{filename}"
+    is_primary = photo_count == 0
+
+    max_index = db.query(func.max(UserPhoto.order_index)).filter(
+        UserPhoto.user_id == current_user.id
+    ).scalar()
+    next_index = (max_index + 1) if max_index is not None else 0
+
+    photo = UserPhoto(
+        user_id=current_user.id,
+        file_path=relative_path,
+        is_primary=is_primary,
+        order_index=next_index,
+    )
+    db.add(photo)
+    db.commit()
+    db.refresh(photo)
+    return PhotoResponse.model_validate(photo)
+
+
+@router.delete("/me/photos/{photo_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_photo(
+    photo_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    photo = db.query(UserPhoto).filter(
+        UserPhoto.id == photo_id, UserPhoto.user_id == current_user.id
+    ).first()
+    if not photo:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+
+    was_primary = photo.is_primary
+
+    file_path = Path("uploads") / photo.file_path
+    if file_path.exists():
+        file_path.unlink()
+
+    db.delete(photo)
+
+    # Promote next photo to primary if we just deleted the primary
+    if was_primary:
+        next_photo = (
+            db.query(UserPhoto)
+            .filter(UserPhoto.user_id == current_user.id, UserPhoto.id != photo_id)
+            .order_by(UserPhoto.order_index)
+            .first()
+        )
+        if next_photo:
+            next_photo.is_primary = True
+
+    db.commit()
+
+========== app/schemas/__init__.py ==========
+
+========== app/schemas/account.py ==========
+from datetime import datetime
+from pydantic import BaseModel
+
+
+class AccountStatusResponse(BaseModel):
+    is_active: bool
+    email: str
+    created_at: datetime
+
+========== app/schemas/auth.py ==========
+from pydantic import BaseModel, EmailStr, Field
+
+
+class SignupRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user_id: str
+    is_active: bool
+
+========== app/schemas/block.py ==========
+from datetime import datetime
+from pydantic import BaseModel
+
+
+class BlockRequest(BaseModel):
+    blocked_user_id: str
+
+
+class BlockResponse(BaseModel):
+    blocked_user_id: str
+    auto_unmatched: bool = False
+
+
+class BlockedUserResponse(BaseModel):
+    id: str
+    blocked_user_id: str
+    created_at: datetime
+
+========== app/schemas/chat.py ==========
+from datetime import datetime
+from pydantic import BaseModel, Field
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., max_length=2000)
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    current_topic: str
+    onboarding_status: str
+
+
+class ChatMessageResponse(BaseModel):
+    id: str
+    role: str
+    content: str
+    topic: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ChatStatusResponse(BaseModel):
+    current_topic: str
+    topics_completed: list[str]
+    onboarding_status: str
+    profile_completeness: float
+
+========== app/schemas/discover.py ==========
+from datetime import date, datetime
+from pydantic import BaseModel
+
+from app.schemas.user import PhotoResponse, ProfileDataResponse
+
+
+class DiscoverUserResponse(BaseModel):
+    id: str
+    display_name: str | None = None
+    date_of_birth: date | None = None
+    gender: str | None = None
+    location: str | None = None
+    photos: list[PhotoResponse] = []
+    profile: ProfileDataResponse | None = None
+    compatibility_score: float = 0.0
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DiscoverResponse(BaseModel):
+    users: list[DiscoverUserResponse]
+    total: int
+    limit: int
+    offset: int
+
+========== app/schemas/match.py ==========
+from datetime import datetime
+from pydantic import BaseModel
+
+from app.schemas.discover import DiscoverUserResponse
+
+
+class LikeRequest(BaseModel):
+    liked_user_id: str
+
+
+class LikeResponse(BaseModel):
+    liked_user_id: str
+    is_match: bool
+    match_id: str | None = None
+
+
+class PassRequest(BaseModel):
+    passed_user_id: str
+
+
+class PassResponse(BaseModel):
+    passed_user_id: str
+
+
+class MatchResponse(BaseModel):
+    id: str
+    other_user: DiscoverUserResponse
+    compatibility_score: float | None = None
+    created_at: datetime
+
+
+class MatchListResponse(BaseModel):
+    matches: list[MatchResponse]
+    total: int
+    limit: int
+    offset: int
+
+========== app/schemas/message.py ==========
+from datetime import datetime
+from pydantic import BaseModel, Field
+
+
+class SendMessageRequest(BaseModel):
+    content: str = Field(..., max_length=5000)
+
+
+class MessageResponse(BaseModel):
+    id: str
+    match_id: str
+    sender_id: str
+    content: str
+    read_at: datetime | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+========== app/schemas/user.py ==========
+from datetime import date, datetime
+from pydantic import BaseModel, model_validator
+
+
+class UserUpdate(BaseModel):
+    display_name: str | None = None
+    date_of_birth: date | None = None
+    gender: str | None = None
+    gender_preference: list[str] | None = None
+    location: str | None = None
+    age_range_min: int | None = None
+    age_range_max: int | None = None
+
+    @model_validator(mode="after")
+    def check_age_range(self):
+        if self.age_range_min is not None and self.age_range_max is not None:
+            if self.age_range_min > self.age_range_max:
+                raise ValueError("age_range_min must not exceed age_range_max")
+        return self
+
+
+class ProfileUpdate(BaseModel):
+    bio: str | None = None
+    interests: list[str] | None = None
+    values: list[str] | None = None
+    personality_traits: list[str] | None = None
+    relationship_goals: str | None = None
+    communication_style: str | None = None
+
+
+class PhotoResponse(BaseModel):
+    id: str
+    file_path: str
+    is_primary: bool
+    order_index: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ProfileDataResponse(BaseModel):
+    bio: str | None = None
+    interests: list | None = None
+    values: list | None = None
+    personality_traits: list | None = None
+    relationship_goals: str | None = None
+    communication_style: str | None = None
+    profile_completeness: float = 0.0
+
+
+class UserResponse(BaseModel):
+    id: str
+    email: str
+    display_name: str | None = None
+    date_of_birth: date | None = None
+    gender: str | None = None
+    gender_preference: list[str] | None = None
+    location: str | None = None
+    age_range_min: int = 18
+    age_range_max: int = 99
+    is_active: bool = True
+    photos: list[PhotoResponse] = []
+    profile: ProfileDataResponse | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+========== app/services/__init__.py ==========
+
+========== app/services/auth_service.py ==========
+from datetime import datetime, timedelta, timezone
+
+from jose import jwt, JWTError
+from passlib.context import CryptContext
+
+from app.config import settings
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def create_access_token(user_id: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode = {"sub": user_id, "exp": expire}
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def decode_access_token(token: str) -> str | None:
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        return payload.get("sub")
+    except JWTError:
+        return None
+
+========== app/services/chat_service.py ==========
+import json
+import logging
+
+from fastapi import HTTPException, status
+from openai import OpenAI, OpenAIError
+from sqlalchemy.orm import Session
+
+from app.config import settings
+from app.models.conversation import ConversationMessage, ConversationState
+from app.models.profile import UserProfile
+
+logger = logging.getLogger(__name__)
+
+MAX_CONVERSATION_MESSAGES = 200
+
+_openai_client = None
+
+
+def _get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    return _openai_client
+
+TOPICS = [
+    "greeting",
+    "values",
+    "relationship_goals",
+    "interests",
+    "personality",
+    "communication_style",
+    "summary",
+]
+
+SYSTEM_PROMPT = """You are a friendly dating app AI assistant helping users build their personality profile.
+You're having a natural conversation to learn about the user across several topics.
+Be warm, engaging, and ask follow-up questions.
+
+Current topic: {topic}
+
+Topics to cover: values, relationship goals, interests, personality traits, communication style.
+
+Guidelines:
+- For "greeting": Welcome the user and ask them to tell you about themselves.
+- For "values": Ask about what they value most in life and relationships.
+- For "relationship_goals": Ask about what they're looking for in a partner and relationship.
+- For "interests": Ask about hobbies, passions, and how they spend their time.
+- For "personality": Ask about how friends would describe them, their social style.
+- For "communication_style": Ask about how they prefer to communicate in relationships.
+- For "summary": Summarize what you've learned and let them know their profile is complete.
+
+When you feel a topic has been sufficiently explored (after 2-3 exchanges), naturally transition to the next topic.
+When transitioning, include the marker [TOPIC_COMPLETE] at the end of your message.
+When all topics are done and you give the summary, include [ONBOARDING_COMPLETE] at the end.
+
+Also extract profile data in JSON when completing each topic. Include the marker:
+[PROFILE_UPDATE]{{"key": "value"}}[/PROFILE_UPDATE]
+
+Keys to extract:
+- "values": list of strings for values topic
+- "relationship_goals": string description for relationship_goals topic
+- "interests": list of strings for interests topic
+- "personality_traits": list of strings for personality topic
+- "communication_style": string description for communication_style topic
+- "bio": string summary for summary topic
+"""
+
+
+def get_or_create_state(db: Session, user_id: str) -> ConversationState:
+    state = db.query(ConversationState).filter(ConversationState.user_id == user_id).first()
+    if not state:
+        state = ConversationState(user_id=user_id, topics_completed=json.dumps([]))
+        db.add(state)
+        db.commit()
+        db.refresh(state)
+    return state
+
+
+def get_conversation_history(db: Session, user_id: str) -> list[ConversationMessage]:
+    return (
+        db.query(ConversationMessage)
+        .filter(ConversationMessage.user_id == user_id)
+        .order_by(ConversationMessage.created_at)
+        .all()
+    )
+
+
+def _extract_profile_updates(content: str) -> dict:
+    updates = {}
+    marker_start = "[PROFILE_UPDATE]"
+    marker_end = "[/PROFILE_UPDATE]"
+    start = content.find(marker_start)
+    while start != -1:
+        end = content.find(marker_end, start)
+        if end == -1:
+            break
+        json_str = content[start + len(marker_start):end]
+        try:
+            data = json.loads(json_str)
+            updates.update(data)
+        except json.JSONDecodeError:
+            pass
+        start = content.find(marker_start, end)
+    return updates
+
+
+def _clean_response(content: str) -> str:
+    """Remove markers from the response shown to the user."""
+    result = content
+    # Remove PROFILE_UPDATE blocks
+    while "[PROFILE_UPDATE]" in result:
+        start = result.find("[PROFILE_UPDATE]")
+        end = result.find("[/PROFILE_UPDATE]")
+        if end == -1:
+            break
+        result = result[:start] + result[end + len("[/PROFILE_UPDATE]"):]
+    # Remove other markers
+    result = result.replace("[TOPIC_COMPLETE]", "").replace("[ONBOARDING_COMPLETE]", "")
+    return result.strip()
+
+
+def _apply_profile_updates(db: Session, user_id: str, updates: dict) -> None:
+    if not updates:
+        return
+
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
+    if not profile:
+        profile = UserProfile(user_id=user_id)
+        db.add(profile)
+
+    field_map = {
+        "values": "values",
+        "interests": "interests",
+        "personality_traits": "personality_traits",
+        "relationship_goals": "relationship_goals",
+        "communication_style": "communication_style",
+        "bio": "bio",
+    }
+
+    for key, value in updates.items():
+        if key in field_map:
+            attr = field_map[key]
+            if isinstance(value, (list, dict)):
+                setattr(profile, attr, json.dumps(value))
+            else:
+                setattr(profile, attr, str(value))
+
+    # Calculate completeness
+    fields = ["bio", "interests", "values", "personality_traits", "relationship_goals", "communication_style"]
+    filled = sum(1 for f in fields if getattr(profile, f, None) is not None)
+    profile.profile_completeness = filled / len(fields)
+
+    db.commit()
+
+
+def _advance_topic(db: Session, state: ConversationState, ai_response: str) -> None:
+    topics_completed = json.loads(state.topics_completed) if state.topics_completed else []
+
+    if "[TOPIC_COMPLETE]" in ai_response or "[ONBOARDING_COMPLETE]" in ai_response:
+        if state.current_topic not in topics_completed:
+            topics_completed.append(state.current_topic)
+        state.topics_completed = json.dumps(topics_completed)
+
+        # Move to next topic
+        current_idx = TOPICS.index(state.current_topic) if state.current_topic in TOPICS else -1
+        if current_idx + 1 < len(TOPICS):
+            state.current_topic = TOPICS[current_idx + 1]
+
+    if "[ONBOARDING_COMPLETE]" in ai_response:
+        state.onboarding_status = "completed"
+
+    db.commit()
+
+
+def process_message(db: Session, user_id: str, user_message: str) -> str:
+    state = get_or_create_state(db, user_id)
+
+    # Save user message
+    user_msg = ConversationMessage(
+        user_id=user_id,
+        role="user",
+        content=user_message,
+        topic=state.current_topic,
+    )
+    db.add(user_msg)
+    db.commit()
+
+    # Build messages for OpenAI (cap history to avoid unbounded growth)
+    history = get_conversation_history(db, user_id)
+    recent_history = history[-MAX_CONVERSATION_MESSAGES:]
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT.format(topic=state.current_topic)},
+    ]
+    for msg in recent_history:
+        messages.append({"role": msg.role, "content": msg.content})
+
+    # Call OpenAI
+    client = _get_openai_client()
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            max_tokens=500,
+            temperature=0.8,
+            timeout=30.0,
+        )
+    except OpenAIError as e:
+        logger.error("OpenAI API call failed: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AI service is temporarily unavailable. Please try again.",
+        )
+
+    ai_content = response.choices[0].message.content
+
+    # Extract and apply profile updates
+    updates = _extract_profile_updates(ai_content)
+    _apply_profile_updates(db, user_id, updates)
+
+    # Capture the topic this response belongs to BEFORE advancing
+    response_topic = state.current_topic
+
+    # Advance topic if needed
+    _advance_topic(db, state, ai_content)
+
+    # Clean response for user
+    clean_content = _clean_response(ai_content)
+
+    # Save assistant message (clean version)
+    assistant_msg = ConversationMessage(
+        user_id=user_id,
+        role="assistant",
+        content=clean_content,
+        topic=response_topic,
+    )
+    db.add(assistant_msg)
+    db.commit()
+
+    return clean_content
+
+========== app/services/matching_service.py ==========
+import json
+from app.models.profile import UserProfile
+
+
+DIMENSION_WEIGHTS = {
+    "values": 0.30,
+    "relationship_goals": 0.25,
+    "interests": 0.15,
+    "personality_traits": 0.15,
+    "communication_style": 0.15,
+}
+
+
+def _parse_field(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return {str(item).lower().strip() for item in parsed}
+        if isinstance(parsed, str):
+            return {parsed.lower().strip()}
+        if isinstance(parsed, dict):
+            return {str(v).lower().strip() for v in parsed.values()}
+    except (json.JSONDecodeError, TypeError):
+        return {value.lower().strip()}
+    return set()
+
+
+def jaccard_similarity(set_a: set, set_b: set) -> float:
+    if not set_a or not set_b:
+        return 0.0
+    intersection = set_a & set_b
+    union = set_a | set_b
+    return len(intersection) / len(union) if union else 0.0
+
+
+def calculate_compatibility(profile1: UserProfile, profile2: UserProfile) -> float:
+    if not profile1 or not profile2:
+        return 0.0
+
+    scores = {}
+    for dimension, weight in DIMENSION_WEIGHTS.items():
+        val1 = getattr(profile1, dimension, None)
+        val2 = getattr(profile2, dimension, None)
+        set1 = _parse_field(val1)
+        set2 = _parse_field(val2)
+        if set1 and set2:
+            scores[dimension] = jaccard_similarity(set1, set2)
+
+    if not scores:
+        return 0.0
+
+    # Renormalize weights for available dimensions
+    available_weights = {k: DIMENSION_WEIGHTS[k] for k in scores}
+    total_weight = sum(available_weights.values())
+
+    weighted_sum = sum(scores[k] * available_weights[k] for k in scores)
+    return weighted_sum / total_weight if total_weight > 0 else 0.0
+
+========== app/utils/__init__.py ==========
+
+========== app/utils/profile_builder.py ==========
+import json
+
+from app.models.user import User
+from app.schemas.user import PhotoResponse, ProfileDataResponse, UserResponse
+from app.schemas.discover import DiscoverUserResponse
+
+
+def build_photos(user: User) -> list[PhotoResponse]:
+    return [PhotoResponse.model_validate(p) for p in sorted(user.photos, key=lambda p: p.order_index)]
+
+
+def build_profile_data(user: User) -> ProfileDataResponse | None:
+    if not user.profile:
+        return None
+    p = user.profile
+    return ProfileDataResponse(
+        bio=p.bio,
+        interests=json.loads(p.interests) if p.interests else None,
+        values=json.loads(p.values) if p.values else None,
+        personality_traits=json.loads(p.personality_traits) if p.personality_traits else None,
+        relationship_goals=p.relationship_goals,
+        communication_style=p.communication_style,
+        profile_completeness=p.profile_completeness,
+    )
+
+
+def build_user_response(user: User) -> UserResponse:
+    gender_pref = json.loads(user.gender_preference) if user.gender_preference else None
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        date_of_birth=user.date_of_birth,
+        gender=user.gender,
+        gender_preference=gender_pref,
+        location=user.location,
+        age_range_min=user.age_range_min,
+        age_range_max=user.age_range_max,
+        is_active=user.is_active,
+        photos=build_photos(user),
+        profile=build_profile_data(user),
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+    )
+
+
+def build_discover_user(user: User, score: float) -> DiscoverUserResponse:
+    return DiscoverUserResponse(
+        id=user.id,
+        display_name=user.display_name,
+        date_of_birth=user.date_of_birth,
+        gender=user.gender,
+        location=user.location,
+        photos=build_photos(user),
+        profile=build_profile_data(user),
+        compatibility_score=round(score, 4),
+        created_at=user.created_at,
+    )
+
+========== app/utils/rate_limiter.py ==========
+import time
+from collections import defaultdict
+from fastapi import HTTPException, status
+
+
+class RateLimiter:
+    def __init__(self, max_requests: int = 30, window_seconds: int = 60):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._requests: dict[str, list[float]] = defaultdict(list)
+        self._last_cleanup: float = time.time()
+        self._cleanup_interval: float = 300.0  # purge stale keys every 5 min
+
+    def _maybe_cleanup(self, now: float) -> None:
+        if now - self._last_cleanup < self._cleanup_interval:
+            return
+        self._last_cleanup = now
+        cutoff = now - self.window_seconds
+        stale = [uid for uid, ts in self._requests.items() if not ts or ts[-1] <= cutoff]
+        for uid in stale:
+            del self._requests[uid]
+
+    def check(self, user_id: str) -> None:
+        now = time.time()
+        self._maybe_cleanup(now)
+        cutoff = now - self.window_seconds
+        # Remove expired entries
+        self._requests[user_id] = [t for t in self._requests[user_id] if t > cutoff]
+        if len(self._requests[user_id]) >= self.max_requests:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Rate limit exceeded. Maximum {self.max_requests} requests per minute.",
+            )
+        self._requests[user_id].append(now)
+
+
+chat_rate_limiter = RateLimiter(max_requests=30, window_seconds=60)
+
+========== tests/__init__.py ==========
+
+========== tests/conftest.py ==========
+import json
+import pytest
+from datetime import date
+from unittest.mock import MagicMock, patch
+
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+from fastapi.testclient import TestClient
+
+from app.database import Base
+from app.dependencies import get_db
+from app.main import app
+from app.models.user import User
+from app.models.profile import UserProfile
+from app.models.conversation import ConversationState
+from app.services.auth_service import hash_password, create_access_token
+
+
+@pytest.fixture()
+def _test_db():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @event.listens_for(engine, "connect")
+    def _pragma(dbapi_conn, _):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    yield Session
+    Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture()
+def db(_test_db):
+    session = _test_db()
+    yield session
+    session.close()
+
+
+@pytest.fixture()
+def client(_test_db):
+    def _override():
+        s = _test_db()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _override
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    from app.utils.rate_limiter import chat_rate_limiter
+    chat_rate_limiter._requests.clear()
+
+
+@pytest.fixture()
+def mock_openai():
+    mock_client = MagicMock()
+    response = MagicMock()
+    response.choices = [MagicMock()]
+    response.choices[0].message.content = "Hello! Tell me about yourself."
+    mock_client.chat.completions.create.return_value = response
+    with patch("app.services.chat_service._get_openai_client", return_value=mock_client):
+        yield mock_client
+
+
+@pytest.fixture()
+def auth_headers():
+    def _make(token):
+        return {"Authorization": f"Bearer {token}"}
+    return _make
+
+
+def _create_onboarded_user(session, **kwargs):
+    email = kwargs.get("email", "user@example.com")
+    display_name = kwargs.get("display_name", "Test User")
+    gender = kwargs.get("gender", "female")
+    gender_preference = kwargs.get("gender_preference", '["male"]')
+    location = kwargs.get("location", "New York")
+    dob = kwargs.get("dob", date(1995, 6, 15))
+    age_min = kwargs.get("age_min", 18)
+    age_max = kwargs.get("age_max", 50)
+    interests = kwargs.get("interests", '["hiking", "reading"]')
+    values = kwargs.get("values", '["honesty", "kindness"]')
+
+    user = User(
+        email=email,
+        hashed_password=hash_password("password123"),
+        display_name=display_name,
+        gender=gender,
+        gender_preference=gender_preference,
+        location=location,
+        date_of_birth=dob,
+        age_range_min=age_min,
+        age_range_max=age_max,
+    )
+    session.add(user)
+    session.flush()
+
+    profile = UserProfile(
+        user_id=user.id,
+        bio="Test bio",
+        interests=interests,
+        values=values,
+        personality_traits='["adventurous", "creative"]',
+        relationship_goals="Long-term relationship",
+        communication_style="Direct and open",
+        profile_completeness=1.0,
+    )
+    session.add(profile)
+
+    state = ConversationState(
+        user_id=user.id,
+        current_topic="summary",
+        topics_completed=json.dumps([
+            "greeting", "values", "relationship_goals",
+            "interests", "personality", "communication_style", "summary",
+        ]),
+        onboarding_status="completed",
+    )
+    session.add(state)
+    session.commit()
+    session.refresh(user)
+
+    token = create_access_token(user.id)
+    return user, token
+
+
+@pytest.fixture()
+def create_user(db):
+    def _create(**kwargs):
+        return _create_onboarded_user(db, **kwargs)
+    return _create
+
+========== tests/test_auth.py ==========
+class TestSignup:
+    def test_success(self, client):
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "new@example.com",
+            "password": "password123",
+        })
+        assert r.status_code == 201
+        data = r.json()
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+        assert data["user_id"]
+        assert data["is_active"] is True
+
+    def test_duplicate_email_returns_409(self, client):
+        payload = {"email": "dup@example.com", "password": "password123"}
+        client.post("/api/v1/auth/signup", json=payload)
+        r = client.post("/api/v1/auth/signup", json=payload)
+        assert r.status_code == 409
+        assert "already registered" in r.json()["detail"]
+
+    def test_short_password_returns_422(self, client):
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "short@example.com",
+            "password": "short",
+        })
+        assert r.status_code == 422
+
+
+class TestLogin:
+    def test_success(self, client):
+        client.post("/api/v1/auth/signup", json={
+            "email": "login@example.com",
+            "password": "password123",
+        })
+        r = client.post("/api/v1/auth/login", json={
+            "email": "login@example.com",
+            "password": "password123",
+        })
+        assert r.status_code == 200
+        data = r.json()
+        assert "access_token" in data
+        assert data["is_active"] is True
+
+    def test_wrong_password_returns_401(self, client):
+        client.post("/api/v1/auth/signup", json={
+            "email": "wrong@example.com",
+            "password": "password123",
+        })
+        r = client.post("/api/v1/auth/login", json={
+            "email": "wrong@example.com",
+            "password": "wrongpassword",
+        })
+        assert r.status_code == 401
+
+    def test_nonexistent_email_returns_401(self, client):
+        r = client.post("/api/v1/auth/login", json={
+            "email": "nope@example.com",
+            "password": "password123",
+        })
+        assert r.status_code == 401
+
+
+class TestDeactivatedUser:
+    def test_deactivated_user_gets_403(self, client):
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "deact@example.com",
+            "password": "password123",
+        })
+        token = r.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Deactivate
+        client.post("/api/v1/account/deactivate", headers=headers)
+
+        # Any normal endpoint should return 403
+        r = client.get("/api/v1/discover", headers=headers)
+        assert r.status_code == 403
+        assert "deactivated" in r.json()["detail"].lower()
+
+    def test_deactivated_user_can_check_status(self, client):
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "deact2@example.com",
+            "password": "password123",
+        })
+        token = r.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        client.post("/api/v1/account/deactivate", headers=headers)
+
+        r = client.get("/api/v1/account/status", headers=headers)
+        assert r.status_code == 200
+        assert r.json()["is_active"] is False
+
+    def test_deactivated_user_can_reactivate(self, client):
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "deact3@example.com",
+            "password": "password123",
+        })
+        token = r.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        client.post("/api/v1/account/deactivate", headers=headers)
+
+        r = client.post("/api/v1/account/reactivate", headers=headers)
+        assert r.status_code == 200
+        assert r.json()["is_active"] is True
+
+========== tests/test_block.py ==========
+class TestBlockUser:
+    def test_block_user(self, client, create_user, auth_headers):
+        _, token1 = create_user(email="b1@test.com")
+        user2, _ = create_user(email="b2@test.com")
+
+        r = client.post(
+            "/api/v1/block",
+            json={"blocked_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 201
+        data = r.json()
+        assert data["blocked_user_id"] == user2.id
+        assert data["auto_unmatched"] is False
+
+    def test_block_self_returns_400(self, client, create_user, auth_headers):
+        user1, token1 = create_user(email="bs@test.com")
+        r = client.post(
+            "/api/v1/block",
+            json={"blocked_user_id": user1.id},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 400
+
+    def test_block_already_blocked_returns_409(self, client, create_user, auth_headers):
+        _, token1 = create_user(email="bb1@test.com")
+        user2, _ = create_user(email="bb2@test.com")
+
+        client.post("/api/v1/block", json={"blocked_user_id": user2.id}, headers=auth_headers(token1))
+        r = client.post("/api/v1/block", json={"blocked_user_id": user2.id}, headers=auth_headers(token1))
+        assert r.status_code == 409
+
+
+class TestBlockAutoUnmatch:
+    def test_blocking_auto_unmatches(self, client, create_user, auth_headers):
+        user1, token1 = create_user(email="au1@test.com")
+        user2, token2 = create_user(email="au2@test.com")
+
+        # Create a match
+        client.post("/api/v1/matches/like", json={"liked_user_id": user2.id}, headers=auth_headers(token1))
+        client.post("/api/v1/matches/like", json={"liked_user_id": user1.id}, headers=auth_headers(token2))
+
+        # Verify match exists
+        r = client.get("/api/v1/matches", headers=auth_headers(token1))
+        assert r.json()["total"] == 1
+
+        # Block -> should auto-unmatch
+        r = client.post(
+            "/api/v1/block",
+            json={"blocked_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 201
+        assert r.json()["auto_unmatched"] is True
+
+        # Match should be gone
+        r = client.get("/api/v1/matches", headers=auth_headers(token1))
+        assert r.json()["total"] == 0
+
+
+class TestUnblock:
+    def test_unblock_user(self, client, create_user, auth_headers):
+        _, token1 = create_user(email="ub1@test.com")
+        user2, _ = create_user(email="ub2@test.com")
+
+        client.post("/api/v1/block", json={"blocked_user_id": user2.id}, headers=auth_headers(token1))
+        r = client.delete(f"/api/v1/block/{user2.id}", headers=auth_headers(token1))
+        assert r.status_code == 204
+
+    def test_unblock_nonexistent_returns_404(self, client, create_user, auth_headers):
+        _, token1 = create_user(email="unf@test.com")
+        r = client.delete("/api/v1/block/fake-id", headers=auth_headers(token1))
+        assert r.status_code == 404
+
+
+class TestListBlocked:
+    def test_list_blocked_users(self, client, create_user, auth_headers):
+        _, token1 = create_user(email="lb1@test.com")
+        user2, _ = create_user(email="lb2@test.com")
+        user3, _ = create_user(email="lb3@test.com")
+
+        client.post("/api/v1/block", json={"blocked_user_id": user2.id}, headers=auth_headers(token1))
+        client.post("/api/v1/block", json={"blocked_user_id": user3.id}, headers=auth_headers(token1))
+
+        r = client.get("/api/v1/block", headers=auth_headers(token1))
+        assert r.status_code == 200
+        blocked = r.json()
+        assert len(blocked) == 2
+        blocked_ids = [b["blocked_user_id"] for b in blocked]
+        assert user2.id in blocked_ids
+        assert user3.id in blocked_ids
+
+========== tests/test_chat.py ==========
+from unittest.mock import MagicMock
+
+
+def _signup(client):
+    r = client.post("/api/v1/auth/signup", json={
+        "email": "chat@example.com",
+        "password": "password123",
+    })
+    return r.json()["access_token"]
+
+
+def _headers(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _set_ai_response(mock_openai, content):
+    mock_openai.chat.completions.create.return_value.choices[0].message.content = content
+
+
+class TestSendMessage:
+    def test_returns_reply(self, client, mock_openai):
+        token = _signup(client)
+        r = client.post("/api/v1/chat", json={"message": "Hello!"}, headers=_headers(token))
+        assert r.status_code == 200
+        data = r.json()
+        assert "reply" in data
+        assert data["current_topic"] == "greeting"
+        assert data["onboarding_status"] == "in_progress"
+
+    def test_topic_advances_on_topic_complete(self, client, mock_openai):
+        token = _signup(client)
+        _set_ai_response(mock_openai, "Welcome! Great start. [TOPIC_COMPLETE]")
+
+        r = client.post("/api/v1/chat", json={"message": "Hi"}, headers=_headers(token))
+        assert r.status_code == 200
+        data = r.json()
+        assert data["current_topic"] == "values"
+        assert "[TOPIC_COMPLETE]" not in data["reply"]
+
+    def test_profile_update_extracted(self, client, mock_openai):
+        token = _signup(client)
+        _set_ai_response(
+            mock_openai,
+            'Great values! [PROFILE_UPDATE]{"values": ["honesty", "loyalty"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+        )
+
+        r = client.post(
+            "/api/v1/chat", json={"message": "I value honesty"}, headers=_headers(token),
+        )
+        assert r.status_code == 200
+        assert "[PROFILE_UPDATE]" not in r.json()["reply"]
+
+        # Verify profile was updated via chat status
+        r = client.get("/api/v1/chat/status", headers=_headers(token))
+        assert r.json()["profile_completeness"] > 0
+
+
+class TestOnboardingFlow:
+    def test_full_flow_completes(self, client, mock_openai):
+        token = _signup(client)
+        headers = _headers(token)
+
+        responses = [
+            'Welcome! [PROFILE_UPDATE]{"bio": "new user"}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Values noted! [PROFILE_UPDATE]{"values": ["honesty"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Goals noted! [PROFILE_UPDATE]{"relationship_goals": "long-term"}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Fun hobbies! [PROFILE_UPDATE]{"interests": ["hiking"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Great personality! [PROFILE_UPDATE]{"personality_traits": ["kind"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Good style! [PROFILE_UPDATE]{"communication_style": "direct"}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'All done! [PROFILE_UPDATE]{"bio": "Complete profile"}[/PROFILE_UPDATE] [ONBOARDING_COMPLETE]',
+        ]
+
+        mock_resps = []
+        for content in responses:
+            resp = MagicMock()
+            resp.choices = [MagicMock()]
+            resp.choices[0].message.content = content
+            mock_resps.append(resp)
+        mock_openai.chat.completions.create.side_effect = mock_resps
+
+        for i in range(len(responses)):
+            r = client.post("/api/v1/chat", json={"message": f"msg {i}"}, headers=headers)
+            assert r.status_code == 200
+
+        assert r.json()["onboarding_status"] == "completed"
+
+        # Verify status endpoint agrees
+        r = client.get("/api/v1/chat/status", headers=headers)
+        assert r.json()["onboarding_status"] == "completed"
+        assert r.json()["profile_completeness"] == 1.0
+
+
+class TestChatHistory:
+    def test_returns_messages(self, client, mock_openai):
+        token = _signup(client)
+        headers = _headers(token)
+        client.post("/api/v1/chat", json={"message": "Hello!"}, headers=headers)
+
+        r = client.get("/api/v1/chat/history", headers=headers)
+        assert r.status_code == 200
+        messages = r.json()
+        assert len(messages) >= 2
+        roles = [m["role"] for m in messages]
+        assert "user" in roles
+        assert "assistant" in roles
+
+
+class TestPostOnboardingGuard:
+    def test_chat_rejected_after_onboarding_complete(self, client, create_user, auth_headers, mock_openai):
+        # create_user fixture creates a user with onboarding already completed
+        _, token = create_user(email="guard@test.com")
+        r = client.post(
+            "/api/v1/chat", json={"message": "Hello again"}, headers=auth_headers(token),
+        )
+        assert r.status_code == 400
+        assert "already completed" in r.json()["detail"].lower()
+
+
+class TestChatStatus:
+    def test_initial_status(self, client, mock_openai):
+        token = _signup(client)
+        r = client.get("/api/v1/chat/status", headers=_headers(token))
+        assert r.status_code == 200
+        data = r.json()
+        assert data["onboarding_status"] == "in_progress"
+        assert data["current_topic"] == "greeting"
+        assert isinstance(data["topics_completed"], list)
+
+========== tests/test_discover.py ==========
+class TestDiscoverGate:
+    def test_requires_completed_onboarding(self, client, auth_headers):
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "noob@example.com",
+            "password": "password123",
+        })
+        token = r.json()["access_token"]
+        r = client.get("/api/v1/discover", headers=auth_headers(token))
+        assert r.status_code == 403
+        assert "onboarding" in r.json()["detail"].lower()
+
+
+class TestDiscoverResults:
+    def test_returns_matching_candidates(self, client, create_user, auth_headers):
+        _, token1 = create_user(
+            email="d1@test.com", gender="male", gender_preference='["female"]',
+        )
+        user2, _ = create_user(
+            email="d2@test.com", gender="female", gender_preference='["male"]',
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        assert r.status_code == 200
+        data = r.json()
+        assert data["total"] >= 1
+        ids = [u["id"] for u in data["users"]]
+        assert user2.id in ids
+
+    def test_pagination(self, client, create_user, auth_headers):
+        _, token1 = create_user(
+            email="pg0@test.com", gender="male", gender_preference='["female"]',
+        )
+        for i in range(3):
+            create_user(
+                email=f"pg{i + 1}@test.com", gender="female", gender_preference='["male"]',
+            )
+
+        r = client.get("/api/v1/discover?limit=2&offset=0", headers=auth_headers(token1))
+        assert r.status_code == 200
+        data = r.json()
+        assert len(data["users"]) == 2
+        assert data["total"] == 3
+
+        r2 = client.get("/api/v1/discover?limit=2&offset=2", headers=auth_headers(token1))
+        assert len(r2.json()["users"]) == 1
+
+
+class TestDiscoverFiltering:
+    def test_filters_by_gender_preference(self, client, create_user, auth_headers):
+        _, token1 = create_user(
+            email="gf1@test.com", gender="male", gender_preference='["female"]',
+        )
+        # Male user - should NOT appear (user1 wants females)
+        user_same, _ = create_user(
+            email="gf2@test.com", gender="male", gender_preference='["male"]',
+        )
+        # Female user - should appear
+        user_match, _ = create_user(
+            email="gf3@test.com", gender="female", gender_preference='["male"]',
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        ids = [u["id"] for u in r.json()["users"]]
+        assert user_match.id in ids
+        assert user_same.id not in ids
+
+    def test_excludes_already_liked_users(self, client, create_user, auth_headers):
+        _, token1 = create_user(
+            email="el1@test.com", gender="male", gender_preference='["female"]',
+        )
+        user2, _ = create_user(
+            email="el2@test.com", gender="female", gender_preference='["male"]',
+        )
+
+        # Like user2
+        client.post(
+            "/api/v1/matches/like",
+            json={"liked_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        ids = [u["id"] for u in r.json()["users"]]
+        assert user2.id not in ids
+
+    def test_excludes_blocked_users(self, client, create_user, auth_headers):
+        _, token1 = create_user(
+            email="eb1@test.com", gender="male", gender_preference='["female"]',
+        )
+        user2, _ = create_user(
+            email="eb2@test.com", gender="female", gender_preference='["male"]',
+        )
+
+        # Block user2
+        client.post(
+            "/api/v1/block",
+            json={"blocked_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        ids = [u["id"] for u in r.json()["users"]]
+        assert user2.id not in ids
+
+========== tests/test_matches.py ==========
+class TestLike:
+    def test_like_no_mutual(self, client, create_user, auth_headers):
+        _, token1 = create_user(email="l1@test.com")
+        user2, _ = create_user(email="l2@test.com")
+
+        r = client.post(
+            "/api/v1/matches/like",
+            json={"liked_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["liked_user_id"] == user2.id
+        assert data["is_match"] is False
+        assert data["match_id"] is None
+
+    def test_like_self_returns_400(self, client, create_user, auth_headers):
+        user1, token1 = create_user(email="self@test.com")
+        r = client.post(
+            "/api/v1/matches/like",
+            json={"liked_user_id": user1.id},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 400
+
+    def test_duplicate_like_returns_409(self, client, create_user, auth_headers):
+        _, token1 = create_user(email="dup1@test.com")
+        user2, _ = create_user(email="dup2@test.com")
+
+        client.post(
+            "/api/v1/matches/like",
+            json={"liked_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+        r = client.post(
+            "/api/v1/matches/like",
+            json={"liked_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 409
+
+
+class TestPass:
+    def test_pass_user(self, client, create_user, auth_headers):
+        _, token1 = create_user(email="p1@test.com")
+        user2, _ = create_user(email="p2@test.com")
+
+        r = client.post(
+            "/api/v1/matches/pass",
+            json={"passed_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 200
+        assert r.json()["passed_user_id"] == user2.id
+
+
+class TestMutualMatch:
+    def test_mutual_like_creates_match(self, client, create_user, auth_headers):
+        user1, token1 = create_user(email="m1@test.com")
+        user2, token2 = create_user(email="m2@test.com")
+
+        r1 = client.post(
+            "/api/v1/matches/like",
+            json={"liked_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+        assert r1.json()["is_match"] is False
+
+        r2 = client.post(
+            "/api/v1/matches/like",
+            json={"liked_user_id": user1.id},
+            headers=auth_headers(token2),
+        )
+        assert r2.json()["is_match"] is True
+        assert r2.json()["match_id"] is not None
+
+    def test_list_matches(self, client, create_user, auth_headers):
+        user1, token1 = create_user(email="lm1@test.com")
+        user2, token2 = create_user(email="lm2@test.com")
+
+        client.post("/api/v1/matches/like", json={"liked_user_id": user2.id}, headers=auth_headers(token1))
+        client.post("/api/v1/matches/like", json={"liked_user_id": user1.id}, headers=auth_headers(token2))
+
+        r = client.get("/api/v1/matches", headers=auth_headers(token1))
+        assert r.status_code == 200
+        data = r.json()
+        assert data["total"] == 1
+        assert len(data["matches"]) == 1
+        assert data["matches"][0]["other_user"]["id"] == user2.id
+
+
+class TestUnmatch:
+    def test_unmatch_deletes_match(self, client, create_user, auth_headers):
+        user1, token1 = create_user(email="um1@test.com")
+        user2, token2 = create_user(email="um2@test.com")
+
+        client.post("/api/v1/matches/like", json={"liked_user_id": user2.id}, headers=auth_headers(token1))
+        r = client.post("/api/v1/matches/like", json={"liked_user_id": user1.id}, headers=auth_headers(token2))
+        match_id = r.json()["match_id"]
+
+        r = client.delete(f"/api/v1/matches/{match_id}", headers=auth_headers(token1))
+        assert r.status_code == 204
+
+        r = client.get("/api/v1/matches", headers=auth_headers(token1))
+        assert r.json()["total"] == 0
+
+    def test_unmatch_nonexistent_returns_404(self, client, create_user, auth_headers):
+        _, token1 = create_user(email="unf@test.com")
+        r = client.delete("/api/v1/matches/nonexistent-id", headers=auth_headers(token1))
+        assert r.status_code == 404
+
+========== tests/test_matching.py ==========
+import json
+import pytest
+from types import SimpleNamespace
+
+from app.services.matching_service import (
+    DIMENSION_WEIGHTS,
+    _parse_field,
+    calculate_compatibility,
+    jaccard_similarity,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helper to build a profile-like object with given dimension values.
+# Uses SimpleNamespace to avoid SQLAlchemy instrumentation issues.
+# calculate_compatibility only calls getattr(profile, dim, None) so any
+# object with the right attributes works.
+# ---------------------------------------------------------------------------
+def _make_profile(**kwargs):
+    attrs = {dim: kwargs.get(dim) for dim in DIMENSION_WEIGHTS}
+    return SimpleNamespace(**attrs)
+
+
+FULL_PROFILE_DATA = {
+    "values": json.dumps(["honesty", "kindness", "growth"]),
+    "relationship_goals": json.dumps(["long-term", "marriage"]),
+    "interests": json.dumps(["hiking", "reading", "cooking"]),
+    "personality_traits": json.dumps(["adventurous", "creative", "empathetic"]),
+    "communication_style": json.dumps(["direct", "open"]),
+}
+
+
+# ===== _parse_field unit tests =============================================
+
+class TestParseField:
+    def test_none_returns_empty(self):
+        assert _parse_field(None) == set()
+
+    def test_empty_string_returns_empty(self):
+        assert _parse_field("") == set()
+
+    def test_json_list(self):
+        assert _parse_field('["Hiking", "Reading"]') == {"hiking", "reading"}
+
+    def test_json_string(self):
+        assert _parse_field('"Direct and open"') == {"direct and open"}
+
+    def test_json_dict(self):
+        assert _parse_field('{"a": "Honesty", "b": "Growth"}') == {"honesty", "growth"}
+
+    def test_plain_string_fallback(self):
+        assert _parse_field("Long-term relationship") == {"long-term relationship"}
+
+    def test_strips_whitespace(self):
+        assert _parse_field('["  hiking  ", " reading "]') == {"hiking", "reading"}
+
+
+# ===== jaccard_similarity unit tests =======================================
+
+class TestJaccardSimilarity:
+    def test_identical_sets(self):
+        assert jaccard_similarity({"a", "b"}, {"a", "b"}) == 1.0
+
+    def test_disjoint_sets(self):
+        assert jaccard_similarity({"a", "b"}, {"c", "d"}) == 0.0
+
+    def test_partial_overlap(self):
+        # intersection={a}, union={a,b,c} → 1/3
+        assert jaccard_similarity({"a", "b"}, {"a", "c"}) == pytest.approx(1 / 3)
+
+    def test_empty_first_set(self):
+        assert jaccard_similarity(set(), {"a"}) == 0.0
+
+    def test_empty_second_set(self):
+        assert jaccard_similarity({"a"}, set()) == 0.0
+
+    def test_both_empty(self):
+        assert jaccard_similarity(set(), set()) == 0.0
+
+
+# ===== calculate_compatibility tests =======================================
+
+class TestIdenticalProfiles:
+    """Two identical profiles should score 1.0."""
+
+    def test_full_identical(self):
+        p1 = _make_profile(**FULL_PROFILE_DATA)
+        p2 = _make_profile(**FULL_PROFILE_DATA)
+        assert calculate_compatibility(p1, p2) == pytest.approx(1.0)
+
+    def test_single_dimension_identical(self):
+        p1 = _make_profile(values='["honesty"]')
+        p2 = _make_profile(values='["honesty"]')
+        assert calculate_compatibility(p1, p2) == pytest.approx(1.0)
+
+
+class TestCompletelyDifferentProfiles:
+    """Two profiles with zero overlap should score 0.0."""
+
+    def test_all_dimensions_disjoint(self):
+        p1 = _make_profile(
+            values='["honesty"]',
+            relationship_goals='["long-term"]',
+            interests='["hiking"]',
+            personality_traits='["adventurous"]',
+            communication_style='["direct"]',
+        )
+        p2 = _make_profile(
+            values='["ambition"]',
+            relationship_goals='["casual"]',
+            interests='["gaming"]',
+            personality_traits='["introverted"]',
+            communication_style='["reserved"]',
+        )
+        assert calculate_compatibility(p1, p2) == pytest.approx(0.0)
+
+    def test_single_dimension_disjoint(self):
+        p1 = _make_profile(interests='["hiking"]')
+        p2 = _make_profile(interests='["gaming"]')
+        assert calculate_compatibility(p1, p2) == pytest.approx(0.0)
+
+
+class TestPartialOverlap:
+    """Partial overlap should produce proportional scores."""
+
+    def test_half_overlap_single_dimension(self):
+        # intersection={a,b}, union={a,b,c,d} → jaccard=0.5
+        p1 = _make_profile(values='["a", "b", "c"]')
+        p2 = _make_profile(values='["a", "b", "d"]')
+        assert calculate_compatibility(p1, p2) == pytest.approx(0.5)
+
+    def test_mixed_overlap_across_dimensions(self):
+        # values: {honesty}∩{honesty,ambition} / {honesty,ambition} = 1/2
+        # interests: {hiking,reading}∩{hiking} / {hiking,reading} = 1/2
+        p1 = _make_profile(
+            values='["honesty"]',
+            interests='["hiking", "reading"]',
+        )
+        p2 = _make_profile(
+            values='["honesty", "ambition"]',
+            interests='["hiking"]',
+        )
+        # weights: values=0.30, interests=0.15 → renormalized: 0.30/0.45, 0.15/0.45
+        expected = (0.5 * 0.30 + 0.5 * 0.15) / (0.30 + 0.15)
+        assert calculate_compatibility(p1, p2) == pytest.approx(expected)
+
+    def test_one_dimension_full_one_zero(self):
+        # values: identical → 1.0, interests: disjoint → 0.0
+        p1 = _make_profile(values='["honesty"]', interests='["hiking"]')
+        p2 = _make_profile(values='["honesty"]', interests='["gaming"]')
+        expected = (1.0 * 0.30 + 0.0 * 0.15) / (0.30 + 0.15)
+        assert calculate_compatibility(p1, p2) == pytest.approx(expected)
+
+    def test_score_between_zero_and_one(self):
+        p1 = _make_profile(**FULL_PROFILE_DATA)
+        p2 = _make_profile(
+            values='["honesty", "ambition"]',
+            relationship_goals='["casual"]',
+            interests='["hiking", "gaming"]',
+            personality_traits='["adventurous", "introverted"]',
+            communication_style='["direct", "reserved"]',
+        )
+        score = calculate_compatibility(p1, p2)
+        assert 0.0 < score < 1.0
+
+
+class TestMissingDimensionsRenormalized:
+    """Missing dimensions should be excluded and weights renormalized."""
+
+    def test_only_values_populated(self):
+        p1 = _make_profile(values='["honesty", "kindness"]')
+        p2 = _make_profile(values='["honesty", "kindness"]')
+        # Only 'values' present → renormalized weight = 1.0, jaccard = 1.0
+        assert calculate_compatibility(p1, p2) == pytest.approx(1.0)
+
+    def test_one_side_missing_dimension_excludes_it(self):
+        # p1 has values + interests, p2 has only values
+        # interests excluded because p2 is empty → only values counts
+        p1 = _make_profile(values='["honesty"]', interests='["hiking"]')
+        p2 = _make_profile(values='["honesty"]')
+        assert calculate_compatibility(p1, p2) == pytest.approx(1.0)
+
+    def test_two_of_five_dimensions(self):
+        # Only relationship_goals and communication_style populated
+        p1 = _make_profile(
+            relationship_goals='["long-term", "marriage"]',
+            communication_style='["direct"]',
+        )
+        p2 = _make_profile(
+            relationship_goals='["long-term"]',
+            communication_style='["direct", "open"]',
+        )
+        # relationship_goals: {long-term,marriage}∩{long-term}/{long-term,marriage} = 1/2
+        # communication_style: {direct}∩{direct,open}/{direct,open} = 1/2
+        rg_w, cs_w = 0.25, 0.15
+        expected = (0.5 * rg_w + 0.5 * cs_w) / (rg_w + cs_w)
+        assert calculate_compatibility(p1, p2) == pytest.approx(expected)
+
+    def test_renormalized_weights_sum_behavior(self):
+        """Identical profiles still score 1.0 regardless of how many dimensions are present."""
+        for dim in DIMENSION_WEIGHTS:
+            p1 = _make_profile(**{dim: '["x", "y"]'})
+            p2 = _make_profile(**{dim: '["x", "y"]'})
+            assert calculate_compatibility(p1, p2) == pytest.approx(1.0), f"Failed for dimension: {dim}"
+
+
+class TestEmptyProfiles:
+    """Empty or None profiles should return 0.0 gracefully."""
+
+    def test_both_profiles_none(self):
+        assert calculate_compatibility(None, None) == 0.0
+
+    def test_first_profile_none(self):
+        p = _make_profile(**FULL_PROFILE_DATA)
+        assert calculate_compatibility(None, p) == 0.0
+
+    def test_second_profile_none(self):
+        p = _make_profile(**FULL_PROFILE_DATA)
+        assert calculate_compatibility(p, None) == 0.0
+
+    def test_all_dimensions_empty_strings(self):
+        p1 = _make_profile(values="", interests="", relationship_goals="",
+                           personality_traits="", communication_style="")
+        p2 = _make_profile(values="", interests="", relationship_goals="",
+                           personality_traits="", communication_style="")
+        assert calculate_compatibility(p1, p2) == 0.0
+
+    def test_all_dimensions_none(self):
+        p1 = _make_profile()
+        p2 = _make_profile()
+        assert calculate_compatibility(p1, p2) == 0.0
+
+    def test_all_dimensions_empty_json_arrays(self):
+        p1 = _make_profile(values="[]", interests="[]", relationship_goals="[]",
+                           personality_traits="[]", communication_style="[]")
+        p2 = _make_profile(values="[]", interests="[]", relationship_goals="[]",
+                           personality_traits="[]", communication_style="[]")
+        assert calculate_compatibility(p1, p2) == 0.0
+
+========== tests/test_messages.py ==========
+from app.models.block import BlockedUser
+
+
+def _create_match(client, create_user, auth_headers):
+    user1, token1 = create_user(email="msg1@test.com")
+    user2, token2 = create_user(email="msg2@test.com")
+
+    client.post("/api/v1/matches/like", json={"liked_user_id": user2.id}, headers=auth_headers(token1))
+    r = client.post("/api/v1/matches/like", json={"liked_user_id": user1.id}, headers=auth_headers(token2))
+    match_id = r.json()["match_id"]
+
+    return user1, token1, user2, token2, match_id
+
+
+class TestMessageValidation:
+    def test_too_long_message_returns_422(self, client, create_user, auth_headers):
+        _, token1, _, _, match_id = _create_match(client, create_user, auth_headers)
+        r = client.post(
+            f"/api/v1/matches/{match_id}/messages",
+            json={"content": "x" * 5001},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 422
+
+
+class TestSendMessage:
+    def test_send_message(self, client, create_user, auth_headers):
+        _, token1, _, _, match_id = _create_match(client, create_user, auth_headers)
+
+        r = client.post(
+            f"/api/v1/matches/{match_id}/messages",
+            json={"content": "Hey there!"},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 201
+        data = r.json()
+        assert data["content"] == "Hey there!"
+        assert data["match_id"] == match_id
+
+    def test_send_to_nonexistent_match_returns_404(self, client, create_user, auth_headers):
+        _, token1 = create_user(email="nfm@test.com")
+        r = client.post(
+            "/api/v1/matches/fake-id/messages",
+            json={"content": "Hi"},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 404
+
+
+class TestGetMessages:
+    def test_returns_messages_in_order(self, client, create_user, auth_headers):
+        _, token1, _, token2, match_id = _create_match(client, create_user, auth_headers)
+
+        client.post(f"/api/v1/matches/{match_id}/messages", json={"content": "Hi"}, headers=auth_headers(token1))
+        client.post(f"/api/v1/matches/{match_id}/messages", json={"content": "Hello"}, headers=auth_headers(token2))
+
+        r = client.get(f"/api/v1/matches/{match_id}/messages", headers=auth_headers(token1))
+        assert r.status_code == 200
+        msgs = r.json()
+        assert len(msgs) == 2
+        assert msgs[0]["content"] == "Hi"
+        assert msgs[1]["content"] == "Hello"
+
+
+class TestMessageBlockCheck:
+    def test_blocked_user_cannot_message(self, client, create_user, auth_headers, db):
+        user1, token1, user2, _, match_id = _create_match(client, create_user, auth_headers)
+
+        # Insert block directly to keep the match intact for testing
+        block = BlockedUser(blocker_id=user2.id, blocked_id=user1.id)
+        db.add(block)
+        db.commit()
+
+        r = client.post(
+            f"/api/v1/matches/{match_id}/messages",
+            json={"content": "Hi"},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 403
+        assert "blocked" in r.json()["detail"].lower()
+
+========== tests/test_profile.py ==========
+import io
+import struct
+import zlib
+
+
+def _make_png_bytes():
+    """Minimal valid PNG (1x1 transparent pixel)."""
+    def _chunk(chunk_type, data):
+        c = chunk_type + data
+        crc = struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
+        return struct.pack(">I", len(data)) + c + crc
+
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+    raw = b"\x00" + b"\x00\x00\x00\x00"
+    idat = zlib.compress(raw)
+    return sig + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
+
+
+def _make_jpeg_bytes():
+    """Minimal JPEG-like header bytes."""
+    return b"\xff\xd8\xff\xe0" + b"\x00" * 100
+
+
+class TestUpdateProfile:
+    def test_update_display_name(self, client, create_user, auth_headers):
+        _, token = create_user(email="up1@test.com")
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"display_name": "New Name"},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert r.json()["display_name"] == "New Name"
+
+    def test_update_gender_preference(self, client, create_user, auth_headers):
+        _, token = create_user(email="up2@test.com")
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"gender_preference": ["male", "female"]},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert set(r.json()["gender_preference"]) == {"male", "female"}
+
+    def test_update_location(self, client, create_user, auth_headers):
+        _, token = create_user(email="up3@test.com")
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"location": "Los Angeles"},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert r.json()["location"] == "Los Angeles"
+
+    def test_update_age_range(self, client, create_user, auth_headers):
+        _, token = create_user(email="up4@test.com")
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"age_range_min": 25, "age_range_max": 40},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert r.json()["age_range_min"] == 25
+        assert r.json()["age_range_max"] == 40
+
+    def test_get_profile(self, client, create_user, auth_headers):
+        _, token = create_user(email="gp@test.com", display_name="My Name")
+        r = client.get("/api/v1/profile/me", headers=auth_headers(token))
+        assert r.status_code == 200
+        data = r.json()
+        assert data["display_name"] == "My Name"
+        assert data["profile"] is not None
+        assert data["profile"]["bio"] == "Test bio"
+
+
+class TestPhotoUpload:
+    def test_upload_valid_png(self, client, create_user, auth_headers):
+        _, token = create_user(email="pu1@test.com")
+        png = _make_png_bytes()
+        r = client.post(
+            "/api/v1/profile/me/photos",
+            files={"file": ("test.png", io.BytesIO(png), "image/png")},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 201
+        data = r.json()
+        assert data["is_primary"] is True
+        assert data["order_index"] == 0
+
+    def test_upload_valid_jpeg(self, client, create_user, auth_headers):
+        _, token = create_user(email="pu2@test.com")
+        jpeg = _make_jpeg_bytes()
+        r = client.post(
+            "/api/v1/profile/me/photos",
+            files={"file": ("photo.jpg", io.BytesIO(jpeg), "image/jpeg")},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 201
+
+    def test_upload_rejects_non_image_extension(self, client, create_user, auth_headers):
+        _, token = create_user(email="pu3@test.com")
+        r = client.post(
+            "/api/v1/profile/me/photos",
+            files={"file": ("malware.exe", io.BytesIO(b"not an image"), "image/png")},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 400
+
+    def test_upload_rejects_non_image_content_type(self, client, create_user, auth_headers):
+        _, token = create_user(email="pu4@test.com")
+        r = client.post(
+            "/api/v1/profile/me/photos",
+            files={"file": ("test.png", io.BytesIO(b"data"), "text/plain")},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 400
+
+    def test_upload_rejects_invalid_magic_bytes(self, client, create_user, auth_headers):
+        _, token = create_user(email="pu5@test.com")
+        r = client.post(
+            "/api/v1/profile/me/photos",
+            files={"file": ("test.png", io.BytesIO(b"this is not a png"), "image/png")},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 400
+        assert "not a valid image" in r.json()["detail"]
+
+    def test_upload_rejects_oversized_file(self, client, create_user, auth_headers):
+        _, token = create_user(email="pu6@test.com")
+        png_header = b"\x89PNG\r\n\x1a\n"
+        big_content = png_header + b"\x00" * (6 * 1024 * 1024)
+        r = client.post(
+            "/api/v1/profile/me/photos",
+            files={"file": ("big.png", io.BytesIO(big_content), "image/png")},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 413
+
+    def test_second_photo_not_primary(self, client, create_user, auth_headers):
+        _, token = create_user(email="pu7@test.com")
+        png = _make_png_bytes()
+        client.post(
+            "/api/v1/profile/me/photos",
+            files={"file": ("p1.png", io.BytesIO(png), "image/png")},
+            headers=auth_headers(token),
+        )
+        r = client.post(
+            "/api/v1/profile/me/photos",
+            files={"file": ("p2.png", io.BytesIO(png), "image/png")},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 201
+        assert r.json()["is_primary"] is False
+        assert r.json()["order_index"] == 1
+
+
+class TestPhotoDelete:
+    def test_delete_own_photo(self, client, create_user, auth_headers):
+        _, token = create_user(email="pd1@test.com")
+        png = _make_png_bytes()
+        r = client.post(
+            "/api/v1/profile/me/photos",
+            files={"file": ("test.png", io.BytesIO(png), "image/png")},
+            headers=auth_headers(token),
+        )
+        photo_id = r.json()["id"]
+        r = client.delete(f"/api/v1/profile/me/photos/{photo_id}", headers=auth_headers(token))
+        assert r.status_code == 204
+
+    def test_delete_nonexistent_photo_returns_404(self, client, create_user, auth_headers):
+        _, token = create_user(email="pd2@test.com")
+        r = client.delete("/api/v1/profile/me/photos/fake-id", headers=auth_headers(token))
+        assert r.status_code == 404
+
+    def test_cannot_delete_others_photo(self, client, create_user, auth_headers):
+        _, token1 = create_user(email="pd3@test.com")
+        _, token2 = create_user(email="pd4@test.com")
+        png = _make_png_bytes()
+        r = client.post(
+            "/api/v1/profile/me/photos",
+            files={"file": ("test.png", io.BytesIO(png), "image/png")},
+            headers=auth_headers(token1),
+        )
+        photo_id = r.json()["id"]
+        r = client.delete(f"/api/v1/profile/me/photos/{photo_id}", headers=auth_headers(token2))
+        assert r.status_code == 404
+
+
+class TestPhotoOrderIndexAfterDeletion:
+    def test_no_duplicate_order_index_after_delete_and_upload(self, client, create_user, auth_headers):
+        _, token = create_user(email="oi1@test.com")
+        png = _make_png_bytes()
+
+        # Upload 3 photos (indexes 0, 1, 2)
+        ids = []
+        for i in range(3):
+            r = client.post(
+                "/api/v1/profile/me/photos",
+                files={"file": (f"p{i}.png", io.BytesIO(png), "image/png")},
+                headers=auth_headers(token),
+            )
+            assert r.status_code == 201
+            ids.append(r.json()["id"])
+
+        # Delete the middle photo (index 1)
+        r = client.delete(f"/api/v1/profile/me/photos/{ids[1]}", headers=auth_headers(token))
+        assert r.status_code == 204
+
+        # Upload a new photo — should get index 3, not 2
+        r = client.post(
+            "/api/v1/profile/me/photos",
+            files={"file": ("new.png", io.BytesIO(png), "image/png")},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 201
+        assert r.json()["order_index"] == 3
+
+
+class TestProfileDetailsUpdate:
+    def test_update_bio(self, client, create_user, auth_headers):
+        _, token = create_user(email="pdu1@test.com")
+        r = client.put(
+            "/api/v1/profile/me/profile",
+            json={"bio": "Updated bio"},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert r.json()["bio"] == "Updated bio"
+
+    def test_update_interests(self, client, create_user, auth_headers):
+        _, token = create_user(email="pdu2@test.com")
+        r = client.put(
+            "/api/v1/profile/me/profile",
+            json={"interests": ["cooking", "yoga"]},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert r.json()["interests"] == ["cooking", "yoga"]
+
+    def test_update_recalculates_completeness(self, client, auth_headers):
+        # New user with no profile
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "pdu3@test.com", "password": "password123",
+        })
+        token = r.json()["access_token"]
+
+        r = client.put(
+            "/api/v1/profile/me/profile",
+            json={"bio": "Hi", "interests": ["a"], "values": ["b"]},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        # 3 of 6 fields filled → 0.5
+        assert r.json()["profile_completeness"] == 0.5
+
+    def test_partial_update_preserves_existing(self, client, create_user, auth_headers):
+        _, token = create_user(email="pdu4@test.com")
+        # The create_user fixture sets bio="Test bio" and interests=["hiking","reading"]
+        r = client.put(
+            "/api/v1/profile/me/profile",
+            json={"bio": "New bio"},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["bio"] == "New bio"
+        # interests should be preserved from fixture
+        assert data["interests"] == ["hiking", "reading"]
+
+
+class TestBlockedLikePass:
+    def test_cannot_like_blocked_user(self, client, create_user, auth_headers):
+        user1, token1 = create_user(email="bl1@test.com")
+        user2, token2 = create_user(email="bl2@test.com")
+
+        client.post("/api/v1/block", json={"blocked_user_id": user2.id}, headers=auth_headers(token1))
+
+        r = client.post(
+            "/api/v1/matches/like",
+            json={"liked_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 403
+        assert "blocked" in r.json()["detail"].lower()
+
+    def test_cannot_like_user_who_blocked_you(self, client, create_user, auth_headers):
+        user1, token1 = create_user(email="bl3@test.com")
+        user2, token2 = create_user(email="bl4@test.com")
+
+        client.post("/api/v1/block", json={"blocked_user_id": user1.id}, headers=auth_headers(token2))
+
+        r = client.post(
+            "/api/v1/matches/like",
+            json={"liked_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 403
+
+    def test_cannot_pass_blocked_user(self, client, create_user, auth_headers):
+        user1, token1 = create_user(email="bp1@test.com")
+        user2, token2 = create_user(email="bp2@test.com")
+
+        client.post("/api/v1/block", json={"blocked_user_id": user2.id}, headers=auth_headers(token1))
+
+        r = client.post(
+            "/api/v1/matches/pass",
+            json={"passed_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 403
+
+========== requirements.txt ==========
+fastapi==0.104.1
+uvicorn==0.24.0
+sqlalchemy==2.0.23
+pydantic[email]==2.5.2
+pydantic-settings==2.1.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+openai==1.6.1
+python-dotenv==1.0.0
+pytest==7.4.3
+httpx==0.25.2
+
+========== .env.example ==========
+# SQLAlchemy database URL. Use sqlite:///./dating_app.db for local dev,
+# or postgresql://user:pass@host/db for production.
+DATABASE_URL=sqlite:///./dating_app.db
+
+# Secret key for signing JWT tokens. Generate a random string for production.
+SECRET_KEY=your-secret-key-change-in-production
+
+# OpenAI API key for the AI onboarding chat.
+OPENAI_API_KEY=your-openai-api-key
+
+# JSON list of allowed CORS origins for the frontend.
+CORS_ORIGINS=["http://localhost:3000"]
+
+========== README.md ==========
+# AI Dating App Backend
+
+A Hinge-style AI-powered dating app backend. Users complete an AI-guided onboarding conversation that builds their dating profile, then discover compatible matches ranked by a weighted Jaccard similarity algorithm. Built with FastAPI and OpenAI GPT.
+
+## Tech Stack
+
+- **Language:** Python 3.12
+- **Framework:** FastAPI 0.104
+- **ORM / Database:** SQLAlchemy 2.0 with SQLite (swap to PostgreSQL via `DATABASE_URL`)
+- **Auth:** JWT tokens (python-jose) + bcrypt password hashing (passlib)
+- **AI:** OpenAI GPT for conversational profile onboarding
+- **Validation:** Pydantic v2
+
+## Setup
+
+```bash
+# Clone and install
+git clone <repo-url> && cd second
+pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+```
+
+Edit `.env` and fill in the required values:
+
+- **`SECRET_KEY`** — a random string used to sign JWT tokens (generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`)
+- **`OPENAI_API_KEY`** — your OpenAI API key for the AI onboarding chat
+
+```bash
+# Run the server
+uvicorn app.main:app --reload
+```
+
+The server starts at `http://localhost:8000`. Interactive API docs are at `/docs`.
+
+## API Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|:----:|-------------|
+| `GET` | `/health` | No | Health check |
+| **Auth** | | | |
+| `POST` | `/api/v1/auth/signup` | No | Register a new account |
+| `POST` | `/api/v1/auth/login` | No | Log in and get a JWT token |
+| **Profile** | | | |
+| `GET` | `/api/v1/profile/me` | Yes | Get your profile |
+| `PUT` | `/api/v1/profile/me` | Yes | Update basic info (name, gender, location, etc.) |
+| `PUT` | `/api/v1/profile/me/profile` | Yes | Update profile details (bio, interests, values, etc.) |
+| `POST` | `/api/v1/profile/me/photos` | Yes | Upload a photo (max 6, max 5 MB each) |
+| `DELETE` | `/api/v1/profile/me/photos/{photo_id}` | Yes | Delete a photo |
+| **Chat** | | | |
+| `POST` | `/api/v1/chat` | Yes | Send a message to the AI onboarding chat |
+| `GET` | `/api/v1/chat/history` | Yes | Get chat history |
+| `GET` | `/api/v1/chat/status` | Yes | Get onboarding progress |
+| **Discover** | | | |
+| `GET` | `/api/v1/discover` | Yes | Discover compatible users (requires completed onboarding) |
+| **Matches** | | | |
+| `POST` | `/api/v1/matches/like` | Yes | Like a user |
+| `POST` | `/api/v1/matches/pass` | Yes | Pass on a user |
+| `GET` | `/api/v1/matches` | Yes | List your matches |
+| `DELETE` | `/api/v1/matches/{match_id}` | Yes | Unmatch a user |
+| **Messages** | | | |
+| `GET` | `/api/v1/matches/{match_id}/messages` | Yes | Get messages in a match |
+| `POST` | `/api/v1/matches/{match_id}/messages` | Yes | Send a message in a match |
+| **Block** | | | |
+| `POST` | `/api/v1/block` | Yes | Block a user (auto-unmatches) |
+| `DELETE` | `/api/v1/block/{blocked_user_id}` | Yes | Unblock a user |
+| `GET` | `/api/v1/block` | Yes | List blocked users |
+| **Account** | | | |
+| `POST` | `/api/v1/account/deactivate` | Yes | Deactivate your account |
+| `POST` | `/api/v1/account/reactivate` | Yes | Reactivate your account |
+| `GET` | `/api/v1/account/status` | Yes | Get account status |
+
+## Running Tests
+
+```bash
+pytest tests/ -v
+```
+
+Tests use an in-memory SQLite database and mock the OpenAI client, so no external services are needed.
+
+## Project Structure
+
+```
+app/
+  main.py              # FastAPI app, lifespan, router registration
+  config.py            # Pydantic settings (loads .env)
+  database.py          # SQLAlchemy engine and session
+  dependencies.py      # Auth dependency (JWT + is_active gating)
+  models/              # SQLAlchemy ORM models
+    user.py            #   User, UserPhoto
+    profile.py         #   UserProfile
+    conversation.py    #   ConversationState, ConversationMessage
+    match.py           #   Like, Match
+    message.py         #   DirectMessage
+    block.py           #   BlockedUser
+  routers/             # API route handlers
+    auth.py            #   Signup, login
+    profile.py         #   Profile CRUD, photo upload/delete
+    chat.py            #   AI onboarding conversation
+    discover.py        #   Discover compatible users
+    matches.py         #   Like, pass, match list, unmatch
+    messages.py        #   Direct messages within matches
+    block.py           #   Block/unblock users
+    account.py         #   Deactivate/reactivate account
+  schemas/             # Pydantic request/response models
+  services/            # Business logic
+    auth_service.py    #   Password hashing, JWT creation
+    chat_service.py    #   OpenAI integration, topic flow, profile extraction
+    matching_service.py #  Weighted Jaccard compatibility scoring
+  utils/
+    profile_builder.py #   Shared user/profile serialization helpers
+    rate_limiter.py    #   In-memory chat rate limiter
+tests/
+  conftest.py          # Fixtures (client, db, auth, mock OpenAI)
+  test_auth.py
+  test_block.py
+  test_chat.py
+  test_discover.py
+  test_matches.py
+  test_matching.py     # Unit tests for compatibility scoring
+  test_messages.py
+  test_profile.py
+```
+

@@ -1,0 +1,127 @@
+from unittest.mock import MagicMock
+
+
+def _signup(client):
+    r = client.post("/api/v1/auth/signup", json={
+        "email": "chat@example.com",
+        "password": "password123",
+    })
+    return r.json()["access_token"]
+
+
+def _headers(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _set_ai_response(mock_openai, content):
+    mock_openai.chat.completions.create.return_value.choices[0].message.content = content
+
+
+class TestSendMessage:
+    def test_returns_reply(self, client, mock_openai):
+        token = _signup(client)
+        r = client.post("/api/v1/chat", json={"message": "Hello!"}, headers=_headers(token))
+        assert r.status_code == 200
+        data = r.json()
+        assert "reply" in data
+        assert data["current_topic"] == "greeting"
+        assert data["onboarding_status"] == "in_progress"
+
+    def test_topic_advances_on_topic_complete(self, client, mock_openai):
+        token = _signup(client)
+        _set_ai_response(mock_openai, "Welcome! Great start. [TOPIC_COMPLETE]")
+
+        r = client.post("/api/v1/chat", json={"message": "Hi"}, headers=_headers(token))
+        assert r.status_code == 200
+        data = r.json()
+        assert data["current_topic"] == "values"
+        assert "[TOPIC_COMPLETE]" not in data["reply"]
+
+    def test_profile_update_extracted(self, client, mock_openai):
+        token = _signup(client)
+        _set_ai_response(
+            mock_openai,
+            'Great values! [PROFILE_UPDATE]{"values": ["honesty", "loyalty"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+        )
+
+        r = client.post(
+            "/api/v1/chat", json={"message": "I value honesty"}, headers=_headers(token),
+        )
+        assert r.status_code == 200
+        assert "[PROFILE_UPDATE]" not in r.json()["reply"]
+
+        # Verify profile was updated via chat status
+        r = client.get("/api/v1/chat/status", headers=_headers(token))
+        assert r.json()["profile_completeness"] > 0
+
+
+class TestOnboardingFlow:
+    def test_full_flow_completes(self, client, mock_openai):
+        token = _signup(client)
+        headers = _headers(token)
+
+        responses = [
+            'Welcome! [PROFILE_UPDATE]{"bio": "new user"}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Values noted! [PROFILE_UPDATE]{"values": ["honesty"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Goals noted! [PROFILE_UPDATE]{"relationship_goals": "long-term"}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Fun hobbies! [PROFILE_UPDATE]{"interests": ["hiking"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Great personality! [PROFILE_UPDATE]{"personality_traits": ["kind"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Good style! [PROFILE_UPDATE]{"communication_style": "direct"}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'All done! [PROFILE_UPDATE]{"bio": "Complete profile"}[/PROFILE_UPDATE] [ONBOARDING_COMPLETE]',
+        ]
+
+        mock_resps = []
+        for content in responses:
+            resp = MagicMock()
+            resp.choices = [MagicMock()]
+            resp.choices[0].message.content = content
+            mock_resps.append(resp)
+        mock_openai.chat.completions.create.side_effect = mock_resps
+
+        for i in range(len(responses)):
+            r = client.post("/api/v1/chat", json={"message": f"msg {i}"}, headers=headers)
+            assert r.status_code == 200
+
+        assert r.json()["onboarding_status"] == "completed"
+
+        # Verify status endpoint agrees
+        r = client.get("/api/v1/chat/status", headers=headers)
+        assert r.json()["onboarding_status"] == "completed"
+        assert r.json()["profile_completeness"] == 1.0
+
+
+class TestChatHistory:
+    def test_returns_messages(self, client, mock_openai):
+        token = _signup(client)
+        headers = _headers(token)
+        client.post("/api/v1/chat", json={"message": "Hello!"}, headers=headers)
+
+        r = client.get("/api/v1/chat/history", headers=headers)
+        assert r.status_code == 200
+        messages = r.json()
+        assert len(messages) >= 2
+        roles = [m["role"] for m in messages]
+        assert "user" in roles
+        assert "assistant" in roles
+
+
+class TestPostOnboardingGuard:
+    def test_chat_rejected_after_onboarding_complete(self, client, create_user, auth_headers, mock_openai):
+        # create_user fixture creates a user with onboarding already completed
+        _, token = create_user(email="guard@test.com")
+        r = client.post(
+            "/api/v1/chat", json={"message": "Hello again"}, headers=auth_headers(token),
+        )
+        assert r.status_code == 400
+        assert "already completed" in r.json()["detail"].lower()
+
+
+class TestChatStatus:
+    def test_initial_status(self, client, mock_openai):
+        token = _signup(client)
+        r = client.get("/api/v1/chat/status", headers=_headers(token))
+        assert r.status_code == 200
+        data = r.json()
+        assert data["onboarding_status"] == "in_progress"
+        assert data["current_topic"] == "greeting"
+        assert isinstance(data["topics_completed"], list)
