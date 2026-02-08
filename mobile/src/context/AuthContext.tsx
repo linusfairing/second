@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import * as SecureStore from "expo-secure-store";
-import * as SplashScreen from "expo-splash-screen";
 import { getChatStatus } from "../api/chat";
 import { setForceSignOut, setCachedToken } from "../api/client";
 
@@ -56,7 +55,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Token invalid or expired — stay logged out
     } finally {
       setIsLoading(false);
-      await SplashScreen.hideAsync();
     }
   }
 

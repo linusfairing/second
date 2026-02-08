@@ -4,7 +4,8 @@ import { Slot, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { AuthProvider, useAuth } from "../src/context/AuthContext";
 
-SplashScreen.preventAutoHideAsync();
+// Hide splash screen immediately — we use our own loading spinner instead
+SplashScreen.hideAsync().catch(() => {});
 
 function AuthGuard() {
   const { token, isLoading, onboardingComplete } = useAuth();
