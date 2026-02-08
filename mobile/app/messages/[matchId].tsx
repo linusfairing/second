@@ -9,11 +9,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { getMessages, sendMessage } from "../../src/api/matches";
 import { useAuth } from "../../src/context/AuthContext";
 import { MessageResponse } from "../../src/types/api";
+
+const POLL_INTERVAL = 5000;
 
 export default function MessagesScreen() {
   const params = useLocalSearchParams<{ matchId: string }>();
@@ -22,18 +25,31 @@ export default function MessagesScreen() {
   const [messages, setMessages] = useState<MessageResponse[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
   const [sending, setSending] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const nextIdRef = useRef(0);
+  const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
   useEffect(() => {
     loadMessages();
+    // Poll for new messages
+    pollRef.current = setInterval(() => {
+      pollMessages();
+    }, POLL_INTERVAL);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, [matchId]);
 
-  async function loadMessages() {
+  async function loadMessages(isRefresh = false) {
     if (!matchId) return;
-    setLoading(true);
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     setError(false);
     try {
       const data = await getMessages(matchId);
@@ -43,6 +59,21 @@ export default function MessagesScreen() {
       setError(true);
     } finally {
       setLoading(false);
+      setRefreshing(false);
+    }
+  }
+
+  async function pollMessages() {
+    if (!matchId) return;
+    try {
+      const data = await getMessages(matchId);
+      setMessages((prev) => {
+        // Only update if there are new messages (avoid re-render for no reason)
+        if (data.length !== prev.length) return data;
+        return prev;
+      });
+    } catch {
+      // Silently ignore poll failures
     }
   }
 
@@ -124,6 +155,9 @@ export default function MessagesScreen() {
         contentContainerStyle={styles.messageList}
         onContentSizeChange={() =>
           flatListRef.current?.scrollToEnd({ animated: true })
+        }
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={() => loadMessages(true)} tintColor="#e91e63" />
         }
       />
       <View style={styles.inputRow}>

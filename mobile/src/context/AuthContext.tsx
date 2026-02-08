@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import * as SplashScreen from "expo-splash-screen";
 import { getChatStatus } from "../api/chat";
-import { setForceSignOut } from "../api/client";
+import { setForceSignOut, setCachedToken } from "../api/client";
 
 interface AuthState {
   token: string | null;
@@ -76,12 +76,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function signIn(newToken: string, newUserId: string) {
     await SecureStore.setItemAsync("token", newToken);
     await SecureStore.setItemAsync("userId", newUserId);
+    setCachedToken(newToken);
     setToken(newToken);
     setUserId(newUserId);
     await fetchOnboardingStatus();
   }
 
   async function signOut() {
+    setCachedToken(null);
     await SecureStore.deleteItemAsync("token");
     await SecureStore.deleteItemAsync("userId");
     await SecureStore.deleteItemAsync("onboardingComplete");

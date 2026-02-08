@@ -7,6 +7,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Image,
+  RefreshControl,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -18,6 +19,7 @@ export default function MatchesScreen() {
   const router = useRouter();
   const [matches, setMatches] = useState<MatchResponse[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
 
   useFocusEffect(
@@ -26,8 +28,12 @@ export default function MatchesScreen() {
     }, [])
   );
 
-  async function loadMatches() {
-    setLoading(true);
+  async function loadMatches(isRefresh = false) {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     setError(false);
     try {
       const res = await getMatches();
@@ -37,6 +43,7 @@ export default function MatchesScreen() {
       setError(true);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
@@ -103,6 +110,9 @@ export default function MatchesScreen() {
           keyExtractor={(item) => item.id}
           renderItem={renderMatch}
           contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => loadMatches(true)} tintColor="#e91e63" />
+          }
         />
       )}
     </SafeAreaView>

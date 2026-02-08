@@ -8,7 +8,7 @@ from app.models.user import User
 from app.models.match import Like, Match
 from app.models.message import DirectMessage
 from app.models.block import BlockedUser
-from app.schemas.block import BlockRequest, BlockResponse, BlockedUserResponse
+from app.schemas.block import BlockRequest, BlockResponse, BlockedUserResponse, BlockedUserListResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -77,22 +77,28 @@ def unblock_user(
     logger.info("User %s unblocked %s", current_user.id, blocked_user_id)
 
 
-@router.get("", response_model=list[BlockedUserResponse])
+@router.get("", response_model=BlockedUserListResponse)
 def list_blocked_users(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    query = db.query(BlockedUser).filter(BlockedUser.blocker_id == current_user.id)
+    total = query.count()
     blocks = (
-        db.query(BlockedUser)
-        .filter(BlockedUser.blocker_id == current_user.id)
+        query
         .order_by(BlockedUser.created_at.desc())
         .offset(offset)
         .limit(limit)
         .all()
     )
-    return [
-        BlockedUserResponse(id=b.id, blocked_user_id=b.blocked_id, created_at=b.created_at)
-        for b in blocks
-    ]
+    return BlockedUserListResponse(
+        blocks=[
+            BlockedUserResponse(id=b.id, blocked_user_id=b.blocked_id, created_at=b.created_at)
+            for b in blocks
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )

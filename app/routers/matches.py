@@ -1,4 +1,7 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db, get_current_user, check_block
@@ -9,6 +12,8 @@ from app.models.message import DirectMessage
 from app.schemas.match import LikeRequest, LikeResponse, PassRequest, PassResponse, MatchResponse, MatchListResponse
 from app.services.matching_service import calculate_compatibility
 from app.utils.profile_builder import build_discover_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -25,6 +30,8 @@ def like_user(
     target = db.query(User).filter(User.id == request.liked_user_id).first()
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if not target.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot like a deactivated user")
 
     check_block(db, current_user.id, request.liked_user_id)
 
@@ -38,7 +45,12 @@ def like_user(
     db.add(like)
 
     # Check for mutual like (same transaction — nothing committed yet)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already liked/passed this user")
+
     mutual = db.query(Like).filter(
         Like.liker_id == request.liked_user_id,
         Like.liked_id == current_user.id,
@@ -94,7 +106,11 @@ def pass_user(
 
     like = Like(liker_id=current_user.id, liked_id=request.passed_user_id, is_pass=True)
     db.add(like)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already liked/passed this user")
 
     return PassResponse(passed_user_id=request.passed_user_id)
 
@@ -153,7 +169,11 @@ def unmatch(
     if current_user.id not in (match.user1_id, match.user2_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your match")
 
-    # Delete associated messages
+    # Delete associated messages and likes between the two users
     db.query(DirectMessage).filter(DirectMessage.match_id == match_id).delete()
+    db.query(Like).filter(
+        ((Like.liker_id == match.user1_id) & (Like.liked_id == match.user2_id))
+        | ((Like.liker_id == match.user2_id) & (Like.liked_id == match.user1_id))
+    ).delete(synchronize_session="fetch")
     db.delete(match)
     db.commit()

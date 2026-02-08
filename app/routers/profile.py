@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
@@ -33,6 +34,15 @@ def update_my_profile(
     if update.display_name is not None:
         current_user.display_name = update.display_name
     if update.date_of_birth is not None:
+        today = date.today()
+        age = today.year - update.date_of_birth.year - (
+            (today.month, today.day) < (update.date_of_birth.month, update.date_of_birth.day)
+        )
+        if age < 18:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Must be at least 18 years old",
+            )
         current_user.date_of_birth = update.date_of_birth
     if update.gender is not None:
         current_user.gender = update.gender
@@ -111,10 +121,18 @@ def upload_photo(
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be an image")
 
-    # Read and check size
-    content = file.file.read()
-    if len(content) > MAX_PHOTO_SIZE:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File exceeds 5 MB limit")
+    # Read in chunks and enforce size limit early
+    chunks = []
+    bytes_read = 0
+    while True:
+        chunk = file.file.read(1024 * 1024)  # 1 MB chunks
+        if not chunk:
+            break
+        bytes_read += len(chunk)
+        if bytes_read > MAX_PHOTO_SIZE:
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File exceeds 5 MB limit")
+        chunks.append(chunk)
+    content = b"".join(chunks)
 
     # Verify actual image content via magic bytes
     IMAGE_SIGNATURES = {

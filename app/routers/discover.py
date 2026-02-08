@@ -12,7 +12,7 @@ from app.models.match import Like, Match
 from app.models.block import BlockedUser
 from app.schemas.discover import DiscoverResponse
 from app.services.matching_service import calculate_compatibility
-from app.utils.profile_builder import build_discover_user
+from app.utils.profile_builder import build_discover_user, _safe_json_loads
 
 router = APIRouter()
 
@@ -109,7 +109,6 @@ def discover(
             unique.append(c)
 
     # ── Python-level gender-preference filter (requires JSON parsing) ────
-    from app.utils.profile_builder import _safe_json_loads
     user_gender_pref = _safe_json_loads(current_user.gender_preference)
 
     scored: list[tuple[User, float]] = []

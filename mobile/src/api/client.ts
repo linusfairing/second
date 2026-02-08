@@ -4,9 +4,15 @@ import { router } from "expo-router";
 import { API_BASE_URL } from "../config";
 
 let onForceSignOut: (() => void) | null = null;
+let cachedToken: string | null = null;
+let isSigningOut = false;
 
 export function setForceSignOut(fn: () => void) {
   onForceSignOut = fn;
+}
+
+export function setCachedToken(token: string | null) {
+  cachedToken = token;
 }
 
 const client = axios.create({
@@ -16,9 +22,12 @@ const client = axios.create({
 });
 
 client.interceptors.request.use(async (config) => {
-  const token = await SecureStore.getItemAsync("token");
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  // Use in-memory cached token to avoid async SecureStore reads on every request
+  if (!cachedToken) {
+    cachedToken = await SecureStore.getItemAsync("token");
+  }
+  if (cachedToken) {
+    config.headers.Authorization = `Bearer ${cachedToken}`;
   }
   return config;
 });
@@ -28,11 +37,19 @@ client.interceptors.response.use(
   async (error) => {
     const url = error.config?.url || "";
     const isAuthEndpoint = url.includes("/auth/login") || url.includes("/auth/signup");
-    if (error.response?.status === 401 && !isAuthEndpoint) {
-      await SecureStore.deleteItemAsync("token");
-      await SecureStore.deleteItemAsync("userId");
-      if (onForceSignOut) onForceSignOut();
-      router.replace("/auth/login");
+    if (error.response?.status === 401 && !isAuthEndpoint && !isSigningOut) {
+      // Guard against concurrent 401s triggering multiple sign-outs
+      isSigningOut = true;
+      try {
+        cachedToken = null;
+        await SecureStore.deleteItemAsync("token");
+        await SecureStore.deleteItemAsync("userId");
+        await SecureStore.deleteItemAsync("onboardingComplete");
+        if (onForceSignOut) onForceSignOut();
+        router.replace("/auth/login");
+      } finally {
+        isSigningOut = false;
+      }
     }
     return Promise.reject(error);
   }

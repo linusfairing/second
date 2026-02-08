@@ -84,8 +84,9 @@ class TestListBlocked:
 
         r = client.get("/api/v1/block", headers=auth_headers(token1))
         assert r.status_code == 200
-        blocked = r.json()
-        assert len(blocked) == 2
-        blocked_ids = [b["blocked_user_id"] for b in blocked]
+        data = r.json()
+        assert data["total"] == 2
+        assert len(data["blocks"]) == 2
+        blocked_ids = [b["blocked_user_id"] for b in data["blocks"]]
         assert user2.id in blocked_ids
         assert user3.id in blocked_ids

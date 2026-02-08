@@ -20,7 +20,8 @@ export async function uploadPhoto(uri: string) {
   const formData = new FormData();
   const filename = uri.split("/").pop() || "photo.jpg";
   const match = /\.(\w+)$/.exec(filename);
-  const type = match ? `image/${match[1]}` : "image/jpeg";
+  const ext = match ? match[1].toLowerCase() : "jpeg";
+  const type = `image/${ext === "jpg" ? "jpeg" : ext}`;
   formData.append("file", { uri, name: filename, type } as any);
 
   const res = await client.post<PhotoResponse>("/api/v1/profile/me/photos", formData, {

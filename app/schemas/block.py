@@ -15,3 +15,10 @@ class BlockedUserResponse(BaseModel):
     id: str
     blocked_user_id: str
     created_at: datetime
+
+
+class BlockedUserListResponse(BaseModel):
+    blocks: list[BlockedUserResponse]
+    total: int
+    limit: int
+    offset: int

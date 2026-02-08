@@ -6,6 +6,7 @@ from app.models.user import User
 from app.models.match import Match
 from app.models.message import DirectMessage
 from app.schemas.message import SendMessageRequest, MessageResponse
+from app.utils.rate_limiter import message_rate_limiter
 
 router = APIRouter()
 
@@ -52,6 +53,7 @@ def send_message(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    message_rate_limiter.check(current_user.id)
     match = _validate_match_membership(db, match_id, current_user.id)
 
     # Check block between the two users in the match

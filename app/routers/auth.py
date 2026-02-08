@@ -7,6 +7,7 @@ from app.dependencies import get_db
 from app.models.user import User
 from app.schemas.auth import SignupRequest, LoginRequest, TokenResponse
 from app.services.auth_service import hash_password, verify_password, create_access_token
+from app.utils.rate_limiter import auth_rate_limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -14,6 +15,7 @@ router = APIRouter()
 
 @router.post("/signup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def signup(request: SignupRequest, db: Session = Depends(get_db)):
+    auth_rate_limiter.check(request.email.lower())
     email = request.email.lower()
     existing = db.query(User).filter(User.email == email).first()
     if existing:
@@ -34,6 +36,7 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse)
 def login(request: LoginRequest, db: Session = Depends(get_db)):
+    auth_rate_limiter.check(request.email.lower())
     user = db.query(User).filter(User.email == request.email.lower()).first()
     if not user:
         # Run hash anyway to prevent timing-based user enumeration

@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Link } from "expo-router";
 import { signup } from "../../src/api/auth";
 import { useAuth } from "../../src/context/AuthContext";
@@ -35,7 +36,7 @@ export default function SignupScreen() {
     }
     setLoading(true);
     try {
-      const res = await signup(email, password);
+      const res = await signup(email.toLowerCase().trim(), password);
       await signIn(res.access_token, res.user_id);
     } catch (err: any) {
       const msg = err.response?.data?.detail || "Signup failed. Please try again.";
@@ -46,9 +47,10 @@ export default function SignupScreen() {
   }
 
   return (
+    <SafeAreaView style={styles.container}>
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <View style={styles.inner}>
         <Text style={styles.title}>Create Account</Text>
@@ -88,6 +90,7 @@ export default function SignupScreen() {
         </Link>
       </View>
     </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 

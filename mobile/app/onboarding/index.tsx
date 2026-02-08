@@ -44,11 +44,36 @@ export default function OnboardingScreen() {
           }))
         );
       } else {
-        await handleSend("Hello");
+        // Send a silent greeting to kick off the conversation
+        // Don't show it as a user message
+        await sendInitialGreeting();
       }
     } catch (err) {
       console.error("Failed to load chat history:", err);
-      await handleSend("Hello");
+      await sendInitialGreeting();
+    }
+  }
+
+  async function sendInitialGreeting() {
+    setSending(true);
+    try {
+      const res = await sendChatMessage("Hello");
+      const aiMsg: Message = {
+        id: `local-${nextIdRef.current++}`,
+        role: "assistant",
+        content: res.reply,
+      };
+      setMessages([aiMsg]);
+    } catch (err) {
+      console.error("Failed to start onboarding:", err);
+      const errMsg: Message = {
+        id: `local-${nextIdRef.current++}`,
+        role: "error",
+        content: "Failed to start. Please try again.",
+      };
+      setMessages([errMsg]);
+    } finally {
+      setSending(false);
     }
   }
 
@@ -81,7 +106,7 @@ export default function OnboardingScreen() {
       console.error("Failed to send chat message:", err);
       const errMsg: Message = {
         id: `local-${nextIdRef.current++}`,
-        role: "assistant",
+        role: "error",
         content: "Something went wrong. Please try again.",
       };
       setMessages((prev) => [...prev, errMsg]);
@@ -92,14 +117,15 @@ export default function OnboardingScreen() {
 
   function renderMessage({ item }: { item: Message }) {
     const isUser = item.role === "user";
+    const isError = item.role === "error";
     return (
       <View
         style={[
           styles.messageBubble,
-          isUser ? styles.userBubble : styles.aiBubble,
+          isUser ? styles.userBubble : isError ? styles.errorBubble : styles.aiBubble,
         ]}
       >
-        <Text style={[styles.messageText, isUser && styles.userText]}>
+        <Text style={[styles.messageText, isUser && styles.userText, isError && styles.errorText]}>
           {item.content}
         </Text>
       </View>
@@ -174,6 +200,14 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     borderBottomLeftRadius: 4,
   },
+  errorBubble: {
+    backgroundColor: "#fff3f3",
+    alignSelf: "flex-start",
+    borderBottomLeftRadius: 4,
+    borderColor: "#e91e63",
+    borderWidth: 1,
+  },
+  errorText: { color: "#e91e63" },
   messageText: { fontSize: 15, color: "#333" },
   userText: { color: "#fff" },
   inputRow: {

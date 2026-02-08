@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 import { getDiscoverUsers } from "../../src/api/discover";
 import { likeUser, passUser } from "../../src/api/matches";
 import { DiscoverUserResponse } from "../../src/types/api";
@@ -21,20 +22,23 @@ export default function DiscoverScreen() {
   const [acting, setActing] = useState(false);
   const [matchAlert, setMatchAlert] = useState<string | null>(null);
   const matchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const offsetRef = useRef(0);
 
-  useEffect(() => {
-    return () => {
-      if (matchTimerRef.current) clearTimeout(matchTimerRef.current);
-    };
-  }, []);
-
-  const loadUsers = useCallback(async () => {
-    setLoading(true);
+  const loadUsers = useCallback(async (reset = true) => {
+    if (reset) {
+      setLoading(true);
+      offsetRef.current = 0;
+    }
     setError(false);
     try {
-      const res = await getDiscoverUsers();
-      setUsers(res.users);
-      setIndex(0);
+      const res = await getDiscoverUsers(50, offsetRef.current);
+      if (reset) {
+        setUsers(res.users);
+        setIndex(0);
+      } else {
+        setUsers((prev) => [...prev, ...res.users]);
+      }
+      offsetRef.current += res.users.length;
     } catch (err) {
       console.error("Failed to load discover users:", err);
       setError(true);
@@ -43,9 +47,14 @@ export default function DiscoverScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    loadUsers();
-  }, [loadUsers]);
+  useFocusEffect(
+    useCallback(() => {
+      loadUsers();
+      return () => {
+        if (matchTimerRef.current) clearTimeout(matchTimerRef.current);
+      };
+    }, [loadUsers])
+  );
 
   const currentUser = users[index] ?? null;
 
@@ -83,7 +92,7 @@ export default function DiscoverScreen() {
     if (index + 1 < users.length) {
       setIndex((i) => i + 1);
     } else {
-      loadUsers();
+      loadUsers(false);
     }
   }
 

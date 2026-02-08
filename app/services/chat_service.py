@@ -181,14 +181,28 @@ def _advance_topic(db: Session, state: ConversationState, ai_response: str) -> N
     db.commit()
 
 
+_CONTROL_MARKERS = ["[PROFILE_UPDATE]", "[/PROFILE_UPDATE]", "[TOPIC_COMPLETE]", "[ONBOARDING_COMPLETE]"]
+
+
+def _sanitize_user_message(message: str) -> str:
+    """Strip control markers that could allow prompt injection."""
+    sanitized = message
+    for marker in _CONTROL_MARKERS:
+        sanitized = sanitized.replace(marker, "")
+    return sanitized.strip()
+
+
 def process_message(db: Session, user_id: str, user_message: str) -> str:
     state = get_or_create_state(db, user_id)
+
+    # Sanitize to prevent prompt injection via control markers
+    safe_message = _sanitize_user_message(user_message)
 
     # Save user message
     user_msg = ConversationMessage(
         user_id=user_id,
         role="user",
-        content=user_message,
+        content=safe_message,
         topic=state.current_topic,
     )
     db.add(user_msg)
@@ -221,6 +235,12 @@ def process_message(db: Session, user_id: str, user_message: str) -> str:
         )
 
     ai_content = response.choices[0].message.content
+    if not ai_content:
+        logger.error("OpenAI returned empty content for user %s", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AI service returned an empty response. Please try again.",
+        )
 
     # Extract and apply profile updates
     updates = _extract_profile_updates(ai_content)

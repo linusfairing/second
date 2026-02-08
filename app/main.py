@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.config import settings
+from app.config import settings, _INSECURE_DEFAULT
 from app.database import engine, Base
 from app.models import User, UserPhoto, UserProfile, ConversationMessage, ConversationState, Like, Match, DirectMessage, BlockedUser  # noqa: F401
 
@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if settings.SECRET_KEY == "your-secret-key-change-in-production":
-        logger.warning("SECRET_KEY is using the insecure default value. Set a secure key via environment variable.")
+    import os
+    if not os.environ.get("SECRET_KEY"):
+        logger.warning("SECRET_KEY not set via environment. A random key was generated — tokens will not survive restarts.")
     Base.metadata.create_all(bind=engine)
     uploads_dir = Path("uploads")
     uploads_dir.mkdir(exist_ok=True)
