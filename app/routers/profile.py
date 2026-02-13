@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.dependencies import get_db, get_current_user
 from app.models.user import User, UserPhoto
 from app.models.profile import UserProfile
-from app.schemas.user import UserUpdate, ProfileUpdate, UserResponse, PhotoResponse, ProfileDataResponse
+from app.schemas.user import ProfileSetupRequest, UserUpdate, ProfileUpdate, UserResponse, PhotoResponse, ProfileDataResponse
 from app.utils.profile_builder import build_user_response, build_profile_data
 
 router = APIRouter()
@@ -22,6 +22,57 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 @router.get("/me", response_model=UserResponse)
 def get_my_profile(current_user: User = Depends(get_current_user)):
+    return build_user_response(current_user)
+
+
+@router.post("/me/setup", response_model=UserResponse)
+def setup_profile(
+    data: ProfileSetupRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Validate age >= 18
+    today = date.today()
+    age = today.year - data.date_of_birth.year - (
+        (today.month, today.day) < (data.date_of_birth.month, data.date_of_birth.day)
+    )
+    if age < 18:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Must be at least 18 years old",
+        )
+
+    # Require at least 3 photos
+    photo_count = db.query(UserPhoto).filter(UserPhoto.user_id == current_user.id).count()
+    if photo_count < 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"At least 3 photos required (you have {photo_count})",
+        )
+
+    current_user.display_name = data.display_name
+    current_user.date_of_birth = data.date_of_birth
+    current_user.height_inches = data.height_inches
+    current_user.location = data.location
+    current_user.home_town = data.home_town
+    current_user.gender = data.gender
+    current_user.sexual_orientation = data.sexual_orientation
+    current_user.job_title = data.job_title
+    current_user.college_university = data.college_university
+    current_user.education_level = data.education_level
+    current_user.languages = json.dumps(data.languages)
+    current_user.religion = data.religion
+    current_user.children = data.children
+    current_user.family_plans = data.family_plans
+    current_user.drinking = data.drinking
+    current_user.smoking = data.smoking
+    current_user.marijuana = data.marijuana
+    current_user.drugs = data.drugs
+    current_user.hidden_fields = json.dumps(data.hidden_fields)
+    current_user.profile_setup_complete = True
+
+    db.commit()
+    db.refresh(current_user)
     return build_user_response(current_user)
 
 
@@ -54,6 +105,36 @@ def update_my_profile(
         current_user.age_range_min = update.age_range_min
     if update.age_range_max is not None:
         current_user.age_range_max = update.age_range_max
+    if update.height_inches is not None:
+        current_user.height_inches = update.height_inches
+    if update.home_town is not None:
+        current_user.home_town = update.home_town
+    if update.sexual_orientation is not None:
+        current_user.sexual_orientation = update.sexual_orientation
+    if update.job_title is not None:
+        current_user.job_title = update.job_title
+    if update.college_university is not None:
+        current_user.college_university = update.college_university
+    if update.education_level is not None:
+        current_user.education_level = update.education_level
+    if update.languages is not None:
+        current_user.languages = json.dumps(update.languages)
+    if update.religion is not None:
+        current_user.religion = update.religion
+    if update.children is not None:
+        current_user.children = update.children
+    if update.family_plans is not None:
+        current_user.family_plans = update.family_plans
+    if update.drinking is not None:
+        current_user.drinking = update.drinking
+    if update.smoking is not None:
+        current_user.smoking = update.smoking
+    if update.marijuana is not None:
+        current_user.marijuana = update.marijuana
+    if update.drugs is not None:
+        current_user.drugs = update.drugs
+    if update.hidden_fields is not None:
+        current_user.hidden_fields = json.dumps(update.hidden_fields)
 
     if current_user.age_range_min > current_user.age_range_max:
         raise HTTPException(

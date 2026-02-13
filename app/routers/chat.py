@@ -19,6 +19,12 @@ def send_chat_message(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if not current_user.profile_setup_complete:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Complete your profile setup first",
+        )
+
     chat_rate_limiter.check(current_user.id)
 
     state = get_or_create_state(db, current_user.id)
@@ -67,4 +73,5 @@ def get_chat_status(
         topics_completed=topics_completed,
         onboarding_status=state.onboarding_status,
         profile_completeness=completeness,
+        profile_setup_complete=bool(current_user.profile_setup_complete),
     )

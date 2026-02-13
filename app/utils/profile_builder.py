@@ -50,6 +50,22 @@ def build_user_response(user: User) -> UserResponse:
         location=user.location,
         age_range_min=user.age_range_min,
         age_range_max=user.age_range_max,
+        height_inches=user.height_inches,
+        home_town=user.home_town,
+        sexual_orientation=user.sexual_orientation,
+        job_title=user.job_title,
+        college_university=user.college_university,
+        education_level=user.education_level,
+        languages=_safe_json_loads(user.languages),
+        religion=user.religion,
+        children=user.children,
+        family_plans=user.family_plans,
+        drinking=user.drinking,
+        smoking=user.smoking,
+        marijuana=user.marijuana,
+        drugs=user.drugs,
+        hidden_fields=_safe_json_loads(user.hidden_fields, fallback=[]),
+        profile_setup_complete=bool(user.profile_setup_complete),
         is_active=user.is_active,
         photos=build_photos(user),
         profile=build_profile_data(user),
@@ -59,12 +75,33 @@ def build_user_response(user: User) -> UserResponse:
 
 
 def build_discover_user(user: User, score: float) -> DiscoverUserResponse:
+    hidden = set(_safe_json_loads(user.hidden_fields, fallback=[]))
+
+    def _visible(field_name: str, value):
+        if field_name in hidden:
+            return None
+        return value
+
     return DiscoverUserResponse(
         id=user.id,
         display_name=user.display_name,
         date_of_birth=user.date_of_birth,
-        gender=user.gender,
+        gender=_visible("gender", user.gender),
         location=user.location,
+        height_inches=user.height_inches,
+        home_town=_visible("home_town", user.home_town),
+        sexual_orientation=_visible("sexual_orientation", user.sexual_orientation),
+        job_title=_visible("job_title", user.job_title),
+        college_university=_visible("college_university", user.college_university),
+        # education_level is AI-only, never shown to others
+        languages=_visible("languages", _safe_json_loads(user.languages)),
+        religion=_visible("religion", user.religion),
+        children=_visible("children", user.children),
+        family_plans=_visible("family_plans", user.family_plans),
+        drinking=_visible("drinking", user.drinking),
+        smoking=_visible("smoking", user.smoking),
+        marijuana=_visible("marijuana", user.marijuana),
+        drugs=_visible("drugs", user.drugs),
         photos=build_photos(user),
         profile=build_profile_data(user),
         compatibility_score=round(score, 4),

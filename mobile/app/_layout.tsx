@@ -8,7 +8,7 @@ import { AuthProvider, useAuth } from "../src/context/AuthContext";
 SplashScreen.hideAsync().catch(() => {});
 
 function AuthGuard() {
-  const { token, isLoading, onboardingComplete } = useAuth();
+  const { token, isLoading, profileSetupComplete, onboardingComplete } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
@@ -18,14 +18,20 @@ function AuthGuard() {
     const inAuth = segments[0] === "auth";
     const inOnboarding = segments[0] === "onboarding";
 
+    const secondSegment = (segments as string[])[1];
+
     if (!token) {
       if (!inAuth) router.replace("/auth/login");
+    } else if (!profileSetupComplete) {
+      if (!inOnboarding || secondSegment !== "profile-setup")
+        router.replace("/onboarding/profile-setup");
     } else if (!onboardingComplete) {
-      if (!inOnboarding) router.replace("/onboarding");
+      if (!inOnboarding || secondSegment === "profile-setup")
+        router.replace("/onboarding");
     } else {
       if (inAuth || inOnboarding) router.replace("/(tabs)/discover");
     }
-  }, [token, isLoading, onboardingComplete, segments]);
+  }, [token, isLoading, profileSetupComplete, onboardingComplete, segments]);
 
   if (isLoading) {
     return (

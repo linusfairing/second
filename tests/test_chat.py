@@ -1,12 +1,19 @@
 from unittest.mock import MagicMock
 
+from app.models.user import User
 
-def _signup(client):
+
+def _signup(client, db, email="chat@example.com"):
     r = client.post("/api/v1/auth/signup", json={
-        "email": "chat@example.com",
+        "email": email,
         "password": "password123",
     })
-    return r.json()["access_token"]
+    token = r.json()["access_token"]
+    # Mark profile setup complete so chat isn't gated
+    user = db.query(User).filter(User.email == email).first()
+    user.profile_setup_complete = True
+    db.commit()
+    return token
 
 
 def _headers(token):
@@ -18,8 +25,8 @@ def _set_ai_response(mock_openai, content):
 
 
 class TestSendMessage:
-    def test_returns_reply(self, client, mock_openai):
-        token = _signup(client)
+    def test_returns_reply(self, client, db, mock_openai):
+        token = _signup(client, db)
         r = client.post("/api/v1/chat", json={"message": "Hello!"}, headers=_headers(token))
         assert r.status_code == 200
         data = r.json()
@@ -27,8 +34,8 @@ class TestSendMessage:
         assert data["current_topic"] == "greeting"
         assert data["onboarding_status"] == "in_progress"
 
-    def test_topic_advances_on_topic_complete(self, client, mock_openai):
-        token = _signup(client)
+    def test_topic_advances_on_topic_complete(self, client, db, mock_openai):
+        token = _signup(client, db)
         _set_ai_response(mock_openai, "Welcome! Great start. [TOPIC_COMPLETE]")
 
         r = client.post("/api/v1/chat", json={"message": "Hi"}, headers=_headers(token))
@@ -37,8 +44,8 @@ class TestSendMessage:
         assert data["current_topic"] == "values"
         assert "[TOPIC_COMPLETE]" not in data["reply"]
 
-    def test_profile_update_extracted(self, client, mock_openai):
-        token = _signup(client)
+    def test_profile_update_extracted(self, client, db, mock_openai):
+        token = _signup(client, db)
         _set_ai_response(
             mock_openai,
             'Great values! [PROFILE_UPDATE]{"values": ["honesty", "loyalty"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
@@ -56,8 +63,8 @@ class TestSendMessage:
 
 
 class TestOnboardingFlow:
-    def test_full_flow_completes(self, client, mock_openai):
-        token = _signup(client)
+    def test_full_flow_completes(self, client, db, mock_openai):
+        token = _signup(client, db)
         headers = _headers(token)
 
         responses = [
@@ -91,8 +98,8 @@ class TestOnboardingFlow:
 
 
 class TestChatHistory:
-    def test_returns_messages(self, client, mock_openai):
-        token = _signup(client)
+    def test_returns_messages(self, client, db, mock_openai):
+        token = _signup(client, db)
         headers = _headers(token)
         client.post("/api/v1/chat", json={"message": "Hello!"}, headers=headers)
 
@@ -118,10 +125,19 @@ class TestPostOnboardingGuard:
 
 class TestChatStatus:
     def test_initial_status(self, client, mock_openai):
-        token = _signup(client)
+        token = _signup_raw(client)
         r = client.get("/api/v1/chat/status", headers=_headers(token))
         assert r.status_code == 200
         data = r.json()
         assert data["onboarding_status"] == "in_progress"
         assert data["current_topic"] == "greeting"
         assert isinstance(data["topics_completed"], list)
+
+
+def _signup_raw(client, email="chatstatus@example.com"):
+    """Signup without marking profile_setup_complete — for status-only tests."""
+    r = client.post("/api/v1/auth/signup", json={
+        "email": email,
+        "password": "password123",
+    })
+    return r.json()["access_token"]

@@ -1,4 +1,5 @@
 import io
+import json
 import struct
 import zlib
 
@@ -309,3 +310,225 @@ class TestBlockedLikePass:
             headers=auth_headers(token1),
         )
         assert r.status_code == 403
+
+
+def _setup_payload(**overrides):
+    """Return a valid profile setup payload with optional overrides."""
+    base = {
+        "display_name": "Test User",
+        "date_of_birth": "1995-06-15",
+        "height_inches": 68,
+        "location": "New York",
+        "home_town": "Boston",
+        "gender": "Woman",
+        "sexual_orientation": "Straight",
+        "job_title": "Engineer",
+        "college_university": "MIT",
+        "education_level": "Bachelor's",
+        "languages": ["English", "Spanish"],
+        "religion": "None",
+        "children": "No",
+        "family_plans": "Want someday",
+        "drinking": "Socially",
+        "smoking": "Never",
+        "marijuana": "Never",
+        "drugs": "Never",
+        "hidden_fields": [],
+    }
+    base.update(overrides)
+    return base
+
+
+def _upload_photos(client, token, auth_headers, count=3):
+    """Upload `count` valid PNG photos and return their IDs."""
+    png = _make_png_bytes()
+    ids = []
+    for i in range(count):
+        r = client.post(
+            "/api/v1/profile/me/photos",
+            files={"file": (f"p{i}.png", io.BytesIO(png), "image/png")},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 201
+        ids.append(r.json()["id"])
+    return ids
+
+
+class TestProfileSetup:
+    def test_setup_happy_path(self, client, auth_headers):
+        # Sign up a fresh user
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "setup1@test.com", "password": "password123",
+        })
+        token = r.json()["access_token"]
+
+        _upload_photos(client, token, auth_headers, 3)
+
+        payload = _setup_payload()
+        r = client.post(
+            "/api/v1/profile/me/setup",
+            json=payload,
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["profile_setup_complete"] is True
+        assert data["display_name"] == "Test User"
+        assert data["height_inches"] == 68
+        assert data["home_town"] == "Boston"
+        assert data["languages"] == ["English", "Spanish"]
+        assert data["hidden_fields"] == []
+
+    def test_setup_fewer_than_3_photos(self, client, auth_headers):
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "setup2@test.com", "password": "password123",
+        })
+        token = r.json()["access_token"]
+
+        _upload_photos(client, token, auth_headers, 2)
+
+        r = client.post(
+            "/api/v1/profile/me/setup",
+            json=_setup_payload(),
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 400
+        assert "3 photos" in r.json()["detail"]
+
+    def test_setup_underage(self, client, auth_headers):
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "setup3@test.com", "password": "password123",
+        })
+        token = r.json()["access_token"]
+
+        _upload_photos(client, token, auth_headers, 3)
+
+        r = client.post(
+            "/api/v1/profile/me/setup",
+            json=_setup_payload(date_of_birth="2015-01-01"),
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 422
+
+    def test_setup_invalid_hidden_field(self, client, auth_headers):
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "setup4@test.com", "password": "password123",
+        })
+        token = r.json()["access_token"]
+
+        _upload_photos(client, token, auth_headers, 3)
+
+        r = client.post(
+            "/api/v1/profile/me/setup",
+            json=_setup_payload(hidden_fields=["email"]),
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 422
+
+    def test_chat_gated_without_setup(self, client, auth_headers, mock_openai):
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "setup5@test.com", "password": "password123",
+        })
+        token = r.json()["access_token"]
+
+        r = client.post(
+            "/api/v1/chat",
+            json={"message": "Hello"},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 403
+        assert "profile setup" in r.json()["detail"].lower()
+
+    def test_hidden_fields_in_discover(self, client, create_user, auth_headers):
+        # Create user with hidden gender
+        # gender_preference must allow each other's gender for discover to return results
+        user1, token1 = create_user(
+            email="hf1@test.com",
+            gender="Woman",
+            gender_preference='["Man"]',
+            hidden_fields=json.dumps(["gender"]),
+        )
+
+        # Create a second user to discover user1
+        _, token2 = create_user(
+            email="hf2@test.com",
+            gender="Man",
+            gender_preference='["Woman"]',
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token2))
+        assert r.status_code == 200
+        users = r.json()["users"]
+
+        # Find user1 in results — must be found for the test to be meaningful
+        found = [u for u in users if u["id"] == user1.id]
+        assert len(found) == 1, "user1 should appear in discover results"
+        assert found[0]["gender"] is None  # hidden
+
+    def test_education_level_always_null_in_discover(self, client, create_user, auth_headers):
+        # gender_preference must allow each other's gender for discover to return results
+        user1, token1 = create_user(
+            email="edu1@test.com",
+            gender="Woman",
+            gender_preference='["Man"]',
+            education_level="PhD",
+        )
+
+        _, token2 = create_user(
+            email="edu2@test.com",
+            gender="Man",
+            gender_preference='["Woman"]',
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token2))
+        assert r.status_code == 200
+        users = r.json()["users"]
+        found = [u for u in users if u["id"] == user1.id]
+        assert len(found) == 1, "user1 should appear in discover results"
+        # education_level is not in discover response at all (AI-only)
+        assert "education_level" not in found[0]
+
+    def test_setup_with_hidden_fields(self, client, auth_headers):
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "setup6@test.com", "password": "password123",
+        })
+        token = r.json()["access_token"]
+
+        _upload_photos(client, token, auth_headers, 3)
+
+        r = client.post(
+            "/api/v1/profile/me/setup",
+            json=_setup_payload(hidden_fields=["gender", "religion"]),
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert set(data["hidden_fields"]) == {"gender", "religion"}
+
+    def test_profile_setup_complete_in_chat_status(self, client, auth_headers):
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "setup7@test.com", "password": "password123",
+        })
+        token = r.json()["access_token"]
+
+        r = client.get("/api/v1/chat/status", headers=auth_headers(token))
+        assert r.status_code == 200
+        assert r.json()["profile_setup_complete"] is False
+
+    def test_setup_idempotent(self, client, auth_headers):
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "setup8@test.com", "password": "password123",
+        })
+        token = r.json()["access_token"]
+
+        _upload_photos(client, token, auth_headers, 3)
+
+        payload = _setup_payload()
+        r = client.post("/api/v1/profile/me/setup", json=payload, headers=auth_headers(token))
+        assert r.status_code == 200
+
+        # Call again with different name
+        payload["display_name"] = "Updated Name"
+        r = client.post("/api/v1/profile/me/setup", json=payload, headers=auth_headers(token))
+        assert r.status_code == 200
+        assert r.json()["display_name"] == "Updated Name"

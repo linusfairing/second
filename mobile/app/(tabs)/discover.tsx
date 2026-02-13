@@ -89,9 +89,9 @@ export default function DiscoverScreen() {
   }
 
   function advance() {
-    if (index + 1 < users.length) {
-      setIndex((i) => i + 1);
-    } else {
+    const next = index + 1;
+    setIndex(next);
+    if (next >= users.length) {
       loadUsers(false);
     }
   }

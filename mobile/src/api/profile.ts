@@ -1,5 +1,5 @@
 import client from "./client";
-import { UserResponse, UserUpdate, ProfileUpdate, ProfileDataResponse, PhotoResponse } from "../types/api";
+import { UserResponse, UserUpdate, ProfileUpdate, ProfileDataResponse, PhotoResponse, ProfileSetupRequest } from "../types/api";
 
 export async function getMyProfile() {
   const res = await client.get<UserResponse>("/api/v1/profile/me");
@@ -32,4 +32,9 @@ export async function uploadPhoto(uri: string) {
 
 export async function deletePhoto(photoId: string) {
   await client.delete(`/api/v1/profile/me/photos/${photoId}`);
+}
+
+export async function submitProfileSetup(data: ProfileSetupRequest) {
+  const res = await client.post<UserResponse>("/api/v1/profile/me/setup", data);
+  return res.data;
 }

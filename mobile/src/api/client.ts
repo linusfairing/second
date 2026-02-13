@@ -44,6 +44,7 @@ client.interceptors.response.use(
         cachedToken = null;
         await SecureStore.deleteItemAsync("token");
         await SecureStore.deleteItemAsync("userId");
+        await SecureStore.deleteItemAsync("profileSetupComplete");
         await SecureStore.deleteItemAsync("onboardingComplete");
         if (onForceSignOut) onForceSignOut();
         router.replace("/auth/login");

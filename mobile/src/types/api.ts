@@ -35,6 +35,28 @@ export interface ProfileDataResponse {
   profile_completeness: number;
 }
 
+export interface ProfileSetupRequest {
+  display_name: string;
+  date_of_birth: string;
+  height_inches: number;
+  location: string;
+  home_town: string;
+  gender: string;
+  sexual_orientation: string;
+  job_title: string;
+  college_university: string;
+  education_level: string;
+  languages: string[];
+  religion: string;
+  children: string;
+  family_plans: string;
+  drinking: string;
+  smoking: string;
+  marijuana: string;
+  drugs: string;
+  hidden_fields: string[];
+}
+
 export interface UserResponse {
   id: string;
   email: string;
@@ -45,6 +67,22 @@ export interface UserResponse {
   location: string | null;
   age_range_min: number;
   age_range_max: number;
+  height_inches: number | null;
+  home_town: string | null;
+  sexual_orientation: string | null;
+  job_title: string | null;
+  college_university: string | null;
+  education_level: string | null;
+  languages: string[] | null;
+  religion: string | null;
+  children: string | null;
+  family_plans: string | null;
+  drinking: string | null;
+  smoking: string | null;
+  marijuana: string | null;
+  drugs: string | null;
+  hidden_fields: string[] | null;
+  profile_setup_complete: boolean;
   is_active: boolean;
   photos: PhotoResponse[];
   profile: ProfileDataResponse | null;
@@ -60,6 +98,21 @@ export interface UserUpdate {
   location?: string | null;
   age_range_min?: number | null;
   age_range_max?: number | null;
+  height_inches?: number | null;
+  home_town?: string | null;
+  sexual_orientation?: string | null;
+  job_title?: string | null;
+  college_university?: string | null;
+  education_level?: string | null;
+  languages?: string[] | null;
+  religion?: string | null;
+  children?: string | null;
+  family_plans?: string | null;
+  drinking?: string | null;
+  smoking?: string | null;
+  marijuana?: string | null;
+  drugs?: string | null;
+  hidden_fields?: string[] | null;
 }
 
 export interface ProfileUpdate {
@@ -95,6 +148,7 @@ export interface ChatStatusResponse {
   topics_completed: string[];
   onboarding_status: string;
   profile_completeness: number;
+  profile_setup_complete: boolean;
 }
 
 // Discover
@@ -104,6 +158,19 @@ export interface DiscoverUserResponse {
   date_of_birth: string | null;
   gender: string | null;
   location: string | null;
+  height_inches: number | null;
+  home_town: string | null;
+  sexual_orientation: string | null;
+  job_title: string | null;
+  college_university: string | null;
+  languages: string[] | null;
+  religion: string | null;
+  children: string | null;
+  family_plans: string | null;
+  drinking: string | null;
+  smoking: string | null;
+  marijuana: string | null;
+  drugs: string | null;
   photos: PhotoResponse[];
   profile: ProfileDataResponse | null;
   compatibility_score: number;
@@ -178,6 +245,13 @@ export interface BlockedUserResponse {
   id: string;
   blocked_user_id: string;
   created_at: string;
+}
+
+export interface BlockedUserListResponse {
+  blocks: BlockedUserResponse[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 // Account

@@ -27,3 +27,4 @@ class ChatStatusResponse(BaseModel):
     topics_completed: list[str]
     onboarding_status: str
     profile_completeness: float
+    profile_setup_complete: bool = False

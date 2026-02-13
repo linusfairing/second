@@ -105,6 +105,22 @@ def _create_onboarded_user(session, **kwargs):
         date_of_birth=dob,
         age_range_min=age_min,
         age_range_max=age_max,
+        height_inches=kwargs.get("height_inches", 68),
+        home_town=kwargs.get("home_town", "Test City"),
+        sexual_orientation=kwargs.get("sexual_orientation", "Straight"),
+        job_title=kwargs.get("job_title", "Engineer"),
+        college_university=kwargs.get("college_university", "Test University"),
+        education_level=kwargs.get("education_level", "Bachelor's"),
+        languages=kwargs.get("languages", '["English"]'),
+        religion=kwargs.get("religion", "None"),
+        children=kwargs.get("children", "No"),
+        family_plans=kwargs.get("family_plans", "Not sure"),
+        drinking=kwargs.get("drinking", "Socially"),
+        smoking=kwargs.get("smoking", "Never"),
+        marijuana=kwargs.get("marijuana", "Never"),
+        drugs=kwargs.get("drugs", "Never"),
+        hidden_fields=kwargs.get("hidden_fields", "[]"),
+        profile_setup_complete=kwargs.get("profile_setup_complete", True),
     )
     session.add(user)
     session.flush()

@@ -2,6 +2,42 @@ from datetime import date, datetime
 from pydantic import BaseModel, Field, model_validator
 
 
+HIDEABLE_FIELDS = frozenset({
+    "home_town", "gender", "sexual_orientation", "job_title",
+    "college_university", "languages", "religion", "children",
+    "family_plans", "drinking", "smoking", "marijuana", "drugs",
+})
+
+
+class ProfileSetupRequest(BaseModel):
+    display_name: str = Field(..., min_length=1, max_length=100)
+    date_of_birth: date
+    height_inches: int = Field(..., ge=48, le=84)
+    location: str = Field(..., min_length=1, max_length=100)
+    home_town: str = Field(..., min_length=1, max_length=200)
+    gender: str = Field(..., min_length=1, max_length=30)
+    sexual_orientation: str = Field(..., min_length=1, max_length=100)
+    job_title: str = Field(..., min_length=1, max_length=200)
+    college_university: str = Field(..., min_length=1, max_length=200)
+    education_level: str = Field(..., min_length=1, max_length=100)
+    languages: list[str] = Field(..., min_length=1)
+    religion: str = Field(..., min_length=1, max_length=100)
+    children: str = Field(..., min_length=1, max_length=100)
+    family_plans: str = Field(..., min_length=1, max_length=100)
+    drinking: str = Field(..., min_length=1, max_length=50)
+    smoking: str = Field(..., min_length=1, max_length=50)
+    marijuana: str = Field(..., min_length=1, max_length=50)
+    drugs: str = Field(..., min_length=1, max_length=50)
+    hidden_fields: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_hidden_fields(self):
+        invalid = set(self.hidden_fields) - HIDEABLE_FIELDS
+        if invalid:
+            raise ValueError(f"Invalid hidden_fields: {sorted(invalid)}. Allowed: {sorted(HIDEABLE_FIELDS)}")
+        return self
+
+
 class UserUpdate(BaseModel):
     display_name: str | None = Field(None, max_length=100)
     date_of_birth: date | None = None
@@ -10,12 +46,35 @@ class UserUpdate(BaseModel):
     location: str | None = Field(None, max_length=100)
     age_range_min: int | None = Field(None, ge=18, le=120)
     age_range_max: int | None = Field(None, ge=18, le=120)
+    height_inches: int | None = Field(None, ge=48, le=84)
+    home_town: str | None = Field(None, max_length=200)
+    sexual_orientation: str | None = Field(None, max_length=100)
+    job_title: str | None = Field(None, max_length=200)
+    college_university: str | None = Field(None, max_length=200)
+    education_level: str | None = Field(None, max_length=100)
+    languages: list[str] | None = None
+    religion: str | None = Field(None, max_length=100)
+    children: str | None = Field(None, max_length=100)
+    family_plans: str | None = Field(None, max_length=100)
+    drinking: str | None = Field(None, max_length=50)
+    smoking: str | None = Field(None, max_length=50)
+    marijuana: str | None = Field(None, max_length=50)
+    drugs: str | None = Field(None, max_length=50)
+    hidden_fields: list[str] | None = None
 
     @model_validator(mode="after")
     def check_age_range(self):
         if self.age_range_min is not None and self.age_range_max is not None:
             if self.age_range_min > self.age_range_max:
                 raise ValueError("age_range_min must not exceed age_range_max")
+        return self
+
+    @model_validator(mode="after")
+    def validate_hidden_fields(self):
+        if self.hidden_fields is not None:
+            invalid = set(self.hidden_fields) - HIDEABLE_FIELDS
+            if invalid:
+                raise ValueError(f"Invalid hidden_fields: {sorted(invalid)}. Allowed: {sorted(HIDEABLE_FIELDS)}")
         return self
 
 
@@ -58,6 +117,22 @@ class UserResponse(BaseModel):
     location: str | None = None
     age_range_min: int = 18
     age_range_max: int = 99
+    height_inches: int | None = None
+    home_town: str | None = None
+    sexual_orientation: str | None = None
+    job_title: str | None = None
+    college_university: str | None = None
+    education_level: str | None = None
+    languages: list[str] | None = None
+    religion: str | None = None
+    children: str | None = None
+    family_plans: str | None = None
+    drinking: str | None = None
+    smoking: str | None = None
+    marijuana: str | None = None
+    drugs: str | None = None
+    hidden_fields: list[str] | None = None
+    profile_setup_complete: bool = False
     is_active: bool = True
     photos: list[PhotoResponse] = []
     profile: ProfileDataResponse | None = None

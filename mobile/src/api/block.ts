@@ -1,5 +1,5 @@
 import client from "./client";
-import { BlockResponse, BlockedUserResponse } from "../types/api";
+import { BlockResponse, BlockedUserListResponse } from "../types/api";
 
 export async function blockUser(blockedUserId: string) {
   const res = await client.post<BlockResponse>("/api/v1/block", {
@@ -13,6 +13,6 @@ export async function unblockUser(blockedUserId: string) {
 }
 
 export async function getBlockedUsers() {
-  const res = await client.get<BlockedUserResponse[]>("/api/v1/block");
+  const res = await client.get<BlockedUserListResponse>("/api/v1/block");
   return res.data;
 }
