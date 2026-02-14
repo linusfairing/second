@@ -75,6 +75,89 @@ class TestUpdateProfile:
         assert data["profile"]["bio"] == "Test bio"
 
 
+class TestEthnicityField:
+    def test_update_ethnicity(self, client, create_user, auth_headers):
+        _, token = create_user(email="eth1@test.com")
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"ethnicity": "Asian"},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert r.json()["ethnicity"] == "Asian"
+
+    def test_ethnicity_hideable(self, client, create_user, auth_headers):
+        user1, token1 = create_user(
+            email="eth2@test.com",
+            gender="Woman",
+            gender_preference='["Man"]',
+            hidden_fields=json.dumps(["ethnicity"]),
+        )
+        _, token2 = create_user(
+            email="eth3@test.com",
+            gender="Man",
+            gender_preference='["Woman"]',
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token2))
+        assert r.status_code == 200
+        found = [u for u in r.json()["users"] if u["id"] == user1.id]
+        assert len(found) == 1
+        assert found[0]["ethnicity"] is None  # hidden
+
+    def test_ethnicity_visible_in_discover(self, client, create_user, auth_headers):
+        user1, token1 = create_user(
+            email="eth4@test.com",
+            gender="Woman",
+            gender_preference='["Man"]',
+            ethnicity="Hispanic/Latino",
+        )
+        _, token2 = create_user(
+            email="eth5@test.com",
+            gender="Man",
+            gender_preference='["Woman"]',
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token2))
+        assert r.status_code == 200
+        found = [u for u in r.json()["users"] if u["id"] == user1.id]
+        assert len(found) == 1
+        assert found[0]["ethnicity"] == "Hispanic/Latino"
+
+
+class TestAgeRangePartialUpdate:
+    def test_min_exceeds_existing_max(self, client, create_user, auth_headers):
+        _, token = create_user(email="ar1@test.com", age_min=20, age_max=30)
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"age_range_min": 40},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 422
+        assert "exceed" in r.json()["detail"].lower()
+
+    def test_max_below_existing_min(self, client, create_user, auth_headers):
+        _, token = create_user(email="ar2@test.com", age_min=25, age_max=40)
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"age_range_max": 20},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 422
+        assert "exceed" in r.json()["detail"].lower()
+
+    def test_min_equals_max_is_valid(self, client, create_user, auth_headers):
+        _, token = create_user(email="ar3@test.com", age_min=25, age_max=40)
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"age_range_min": 40},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert r.json()["age_range_min"] == 40
+        assert r.json()["age_range_max"] == 40
+
+
 class TestPhotoUpload:
     def test_upload_valid_png(self, client, create_user, auth_headers):
         _, token = create_user(email="pu1@test.com")

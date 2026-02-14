@@ -62,6 +62,13 @@ class TestSendMessage:
         assert r.json()["profile_completeness"] > 0
 
 
+class TestEmptyMessage:
+    def test_empty_message_rejected(self, client, db, mock_openai):
+        token = _signup(client, db)
+        r = client.post("/api/v1/chat", json={"message": ""}, headers=_headers(token))
+        assert r.status_code == 422
+
+
 class TestOnboardingFlow:
     def test_full_flow_completes(self, client, db, mock_openai):
         token = _signup(client, db)
@@ -114,6 +121,31 @@ class TestChatHistory:
         roles = [m["role"] for m in messages]
         assert "user" in roles
         assert "assistant" in roles
+
+
+class TestChatHistoryPagination:
+    def test_limit_and_offset(self, client, db, mock_openai):
+        token = _signup(client, db)
+        headers = _headers(token)
+
+        # Send 3 messages (each creates a user + assistant message = 6 total)
+        for i in range(3):
+            client.post("/api/v1/chat", json={"message": f"msg {i}"}, headers=headers)
+
+        # Should have 6 messages total (3 user + 3 assistant)
+        r = client.get("/api/v1/chat/history?limit=2&offset=0", headers=headers)
+        assert r.status_code == 200
+        assert len(r.json()) == 2
+
+        # Offset past some
+        r = client.get("/api/v1/chat/history?limit=2&offset=4", headers=headers)
+        assert r.status_code == 200
+        assert len(r.json()) == 2
+
+        # Offset past all
+        r = client.get("/api/v1/chat/history?limit=2&offset=10", headers=headers)
+        assert r.status_code == 200
+        assert len(r.json()) == 0
 
 
 class TestPostOnboardingGuard:

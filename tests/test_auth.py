@@ -160,6 +160,31 @@ class TestTokenInvalidation:
         assert r.status_code == 200
 
 
+class TestEmailCaseInsensitive:
+    def test_login_with_different_case(self, client):
+        client.post("/api/v1/auth/signup", json={
+            "email": "CaseTest@Example.COM",
+            "password": "password123",
+        })
+        r = client.post("/api/v1/auth/login", json={
+            "email": "casetest@example.com",
+            "password": "password123",
+        })
+        assert r.status_code == 200
+        assert "access_token" in r.json()
+
+    def test_duplicate_signup_different_case(self, client):
+        client.post("/api/v1/auth/signup", json={
+            "email": "DupCase@Example.COM",
+            "password": "password123",
+        })
+        r = client.post("/api/v1/auth/signup", json={
+            "email": "dupcase@example.com",
+            "password": "password123",
+        })
+        assert r.status_code == 409
+
+
 class TestDeactivatedUser:
     def test_deactivated_user_gets_403(self, client):
         r = client.post("/api/v1/auth/signup", json={

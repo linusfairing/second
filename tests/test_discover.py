@@ -45,6 +45,24 @@ class TestDiscoverResults:
         assert len(r2.json()["users"]) == 1
 
 
+class TestDiscoverExcludesInactive:
+    def test_deactivated_user_not_in_discover(self, client, create_user, auth_headers):
+        _, token1 = create_user(
+            email="di1@test.com", gender="male", gender_preference='["female"]',
+        )
+        user2, token2 = create_user(
+            email="di2@test.com", gender="female", gender_preference='["male"]',
+        )
+
+        # Deactivate user2
+        client.post("/api/v1/account/deactivate", headers=auth_headers(token2))
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        assert r.status_code == 200
+        ids = [u["id"] for u in r.json()["users"]]
+        assert user2.id not in ids
+
+
 class TestDiscoverFiltering:
     def test_filters_by_gender_preference(self, client, create_user, auth_headers):
         _, token1 = create_user(

@@ -62,6 +62,46 @@ class TestGetMessages:
         assert msgs[1]["content"] == "Hello"
 
 
+class TestMessagePagination:
+    def test_limit_and_offset(self, client, create_user, auth_headers):
+        _, token1, _, _, match_id = _create_match(client, create_user, auth_headers)
+
+        for i in range(5):
+            client.post(
+                f"/api/v1/matches/{match_id}/messages",
+                json={"content": f"msg {i}"},
+                headers=auth_headers(token1),
+            )
+
+        # Get first 2
+        r = client.get(
+            f"/api/v1/matches/{match_id}/messages?limit=2&offset=0",
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 200
+        msgs = r.json()
+        assert len(msgs) == 2
+        assert msgs[0]["content"] == "msg 0"
+        assert msgs[1]["content"] == "msg 1"
+
+        # Get next 2
+        r = client.get(
+            f"/api/v1/matches/{match_id}/messages?limit=2&offset=2",
+            headers=auth_headers(token1),
+        )
+        msgs = r.json()
+        assert len(msgs) == 2
+        assert msgs[0]["content"] == "msg 2"
+
+        # Get last page
+        r = client.get(
+            f"/api/v1/matches/{match_id}/messages?limit=2&offset=4",
+            headers=auth_headers(token1),
+        )
+        msgs = r.json()
+        assert len(msgs) == 1
+
+
 class TestMessageBlockCheck:
     def test_blocked_user_cannot_message(self, client, create_user, auth_headers, db):
         user1, token1, user2, _, match_id = _create_match(client, create_user, auth_headers)
@@ -99,6 +139,29 @@ class TestMessageBlockCheck:
             headers=auth_headers(token1),
         )
         assert r.status_code == 403
+
+
+class TestMessageRateLimit:
+    def test_rate_limit_on_messages(self, client, create_user, auth_headers):
+        _, token1, _, _, match_id = _create_match(client, create_user, auth_headers)
+
+        # message_rate_limiter allows 60 requests per 60 seconds
+        for i in range(60):
+            r = client.post(
+                f"/api/v1/matches/{match_id}/messages",
+                json={"content": f"msg {i}"},
+                headers=auth_headers(token1),
+            )
+            assert r.status_code == 201
+
+        # 61st should be rate limited
+        r = client.post(
+            f"/api/v1/matches/{match_id}/messages",
+            json={"content": "one too many"},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 429
+        assert "rate limit" in r.json()["detail"].lower()
 
 
 class TestMessageMatchMembership:

@@ -54,6 +54,44 @@ class TestPass:
         assert r.json()["passed_user_id"] == user2.id
 
 
+class TestLikeNonexistent:
+    def test_like_nonexistent_user_returns_404(self, client, create_user, auth_headers):
+        _, token = create_user(email="lne1@test.com")
+        r = client.post(
+            "/api/v1/matches/like",
+            json={"liked_user_id": "nonexistent-id"},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 404
+
+    def test_pass_nonexistent_user_returns_404(self, client, create_user, auth_headers):
+        _, token = create_user(email="pne1@test.com")
+        r = client.post(
+            "/api/v1/matches/pass",
+            json={"passed_user_id": "nonexistent-id"},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 404
+
+
+class TestDuplicatePass:
+    def test_duplicate_pass_returns_409(self, client, create_user, auth_headers):
+        _, token1 = create_user(email="dp1@test.com")
+        user2, _ = create_user(email="dp2@test.com")
+
+        client.post(
+            "/api/v1/matches/pass",
+            json={"passed_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+        r = client.post(
+            "/api/v1/matches/pass",
+            json={"passed_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 409
+
+
 class TestMutualMatch:
     def test_mutual_like_creates_match(self, client, create_user, auth_headers):
         user1, token1 = create_user(email="m1@test.com")
