@@ -20,6 +20,7 @@ cleanup() {
     log "Shutting down..."
     [ -n "$BACKEND_PID" ] && kill "$BACKEND_PID" 2>/dev/null && log "Backend stopped"
     [ -n "$EXPO_PID" ] && kill "$EXPO_PID" 2>/dev/null && log "Expo stopped"
+    [ -n "$PORT_VIS_PID" ] && kill "$PORT_VIS_PID" 2>/dev/null
     exit 0
 }
 trap cleanup SIGINT SIGTERM
@@ -30,20 +31,41 @@ for port in $BACKEND_PORT $EXPO_PORT; do
     if [ -n "$pid" ]; then
         warn "Killing existing process on port $port (PID $pid)"
         kill "$pid" 2>/dev/null || true
-        sleep 1
     fi
 done
-
-# Also kill any lingering ngrok
 pkill -f ngrok 2>/dev/null || true
+# Single sleep for all kills instead of per-port
+[ -n "$(lsof -ti :$BACKEND_PORT 2>/dev/null || true)$(lsof -ti :$EXPO_PORT 2>/dev/null || true)" ] && sleep 1
 
-# --- Start backend ---
+# --- Start backend + Expo in parallel ---
 log "Starting backend on 0.0.0.0:$BACKEND_PORT..."
 cd "$ROOT"
 uvicorn app.main:app --host 0.0.0.0 --port $BACKEND_PORT &
 BACKEND_PID=$!
 
-# Wait for backend to be ready
+# Start Expo tunnel immediately — don't wait for backend
+log "Starting Expo tunnel..."
+cd "$ROOT/mobile"
+npx expo start --tunnel &
+EXPO_PID=$!
+
+# Make port public in background (slow network call, nothing depends on it)
+if [ -n "$CODESPACE_NAME" ]; then
+    API_URL="https://${CODESPACE_NAME}-${BACKEND_PORT}.app.github.dev"
+    ENV_FILE="$ROOT/mobile/.env"
+    if ! grep -q "$API_URL" "$ENV_FILE" 2>/dev/null; then
+        echo "EXPO_PUBLIC_API_URL=$API_URL" > "$ENV_FILE"
+        log "Updated mobile/.env with $API_URL"
+    fi
+    (
+        gh codespace ports visibility "$BACKEND_PORT:public" -c "$CODESPACE_NAME" 2>/dev/null \
+            && log "Port $BACKEND_PORT is public" \
+            || warn "Could not set port visibility (may already be public)"
+    ) &
+    PORT_VIS_PID=$!
+fi
+
+# Wait for backend health check (runs while Expo is already starting)
 for i in $(seq 1 20); do
     if curl -s -o /dev/null -w "" "http://127.0.0.1:$BACKEND_PORT/docs" 2>/dev/null; then
         log "Backend ready"
@@ -53,27 +75,7 @@ for i in $(seq 1 20); do
     sleep 0.5
 done
 
-# --- Make port public in Codespaces ---
-if [ -n "$CODESPACE_NAME" ]; then
-    log "Making port $BACKEND_PORT public..."
-    gh codespace ports visibility "$BACKEND_PORT:public" -c "$CODESPACE_NAME" 2>/dev/null && log "Port $BACKEND_PORT is public" || warn "Could not set port visibility (may already be public)"
-
-    API_URL="https://${CODESPACE_NAME}-${BACKEND_PORT}.app.github.dev"
-    # Update mobile .env if needed
-    ENV_FILE="$ROOT/mobile/.env"
-    if ! grep -q "$API_URL" "$ENV_FILE" 2>/dev/null; then
-        echo "EXPO_PUBLIC_API_URL=$API_URL" > "$ENV_FILE"
-        log "Updated mobile/.env with $API_URL"
-    fi
-fi
-
-# --- Start Expo with tunnel ---
-log "Starting Expo tunnel..."
-cd "$ROOT/mobile"
-npx expo start --tunnel &
-EXPO_PID=$!
-
-# Wait for tunnel to be ready
+# Wait for tunnel (Expo has had a head start by now)
 log "Waiting for tunnel..."
 TUNNEL_URL=""
 for i in $(seq 1 60); do
