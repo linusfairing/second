@@ -223,7 +223,7 @@ def _validate_profile_value(key: str, value) -> str | None:
         return None
     if key in _STRING_FIELDS:
         if isinstance(value, str):
-            return value[:_MAX_STRING_LENGTH]
+            return value[:_MAX_STRING_LENGTH] if value.strip() else None
         if isinstance(value, list):
             return ", ".join(str(v) for v in value)[:_MAX_STRING_LENGTH]
         return str(value)[:_MAX_STRING_LENGTH]

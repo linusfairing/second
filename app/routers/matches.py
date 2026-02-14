@@ -112,6 +112,8 @@ def pass_user(
     target = db.query(User).filter(User.id == request.passed_user_id).first()
     if not target:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if not target.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot pass a deactivated user")
 
     check_block(db, current_user.id, request.passed_user_id)
 

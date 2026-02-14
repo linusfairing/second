@@ -174,8 +174,9 @@ def update_my_profile_details(
     if update.communication_style is not None:
         profile.communication_style = update.communication_style
 
-    # Recalculate completeness
-    fields = ["bio", "interests", "values", "personality_traits", "relationship_goals", "communication_style"]
+    # Recalculate completeness (must match chat_service._apply_profile_updates)
+    fields = ["bio", "interests", "values", "personality_traits", "relationship_goals",
+              "communication_style", "deal_breakers", "life_goals", "dating_style", "conversation_highlights"]
     filled = sum(1 for f in fields if getattr(profile, f, None) is not None)
     profile.profile_completeness = filled / len(fields)
 

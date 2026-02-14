@@ -335,8 +335,8 @@ class TestProfileDetailsUpdate:
             headers=auth_headers(token),
         )
         assert r.status_code == 200
-        # 3 of 6 fields filled → 0.5
-        assert r.json()["profile_completeness"] == 0.5
+        # 3 of 10 fields filled → 0.3
+        assert r.json()["profile_completeness"] == 0.3
 
     def test_partial_update_preserves_existing(self, client, create_user, auth_headers):
         _, token = create_user(email="pdu4@test.com")
