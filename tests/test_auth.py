@@ -33,7 +33,7 @@ class TestSignup:
         client.post("/api/v1/auth/signup", json=payload)
         r = client.post("/api/v1/auth/signup", json=payload)
         assert r.status_code == 409
-        assert r.json()["detail"] == "Registration failed"
+        assert r.json()["detail"] == "An account with this email already exists"
 
     def test_short_password_returns_422(self, client):
         r = client.post("/api/v1/auth/signup", json={

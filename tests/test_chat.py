@@ -41,7 +41,7 @@ class TestSendMessage:
         r = client.post("/api/v1/chat", json={"message": "Hi"}, headers=_headers(token))
         assert r.status_code == 200
         data = r.json()
-        assert data["current_topic"] == "values"
+        assert data["current_topic"] == "interests"
         assert "[TOPIC_COMPLETE]" not in data["reply"]
 
     def test_profile_update_extracted(self, client, db, mock_openai):
@@ -67,14 +67,18 @@ class TestOnboardingFlow:
         token = _signup(client, db)
         headers = _headers(token)
 
+        # Responses must align with topic flow:
+        # greeting -> interests -> deeper_interests -> relationship_goals ->
+        # dating_style -> life_goals -> communication_style -> summary
         responses = [
-            'Welcome! [PROFILE_UPDATE]{"bio": "new user"}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
-            'Values noted! [PROFILE_UPDATE]{"values": ["honesty"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
-            'Goals noted! [PROFILE_UPDATE]{"relationship_goals": "long-term"}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
-            'Fun hobbies! [PROFILE_UPDATE]{"interests": ["hiking"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
-            'Great personality! [PROFILE_UPDATE]{"personality_traits": ["kind"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
-            'Good style! [PROFILE_UPDATE]{"communication_style": "direct"}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
-            'All done! [PROFILE_UPDATE]{"bio": "Complete profile"}[/PROFILE_UPDATE] [ONBOARDING_COMPLETE]',
+            'Hey! [TOPIC_COMPLETE]',
+            'Cool. [PROFILE_UPDATE]{"interests": ["hiking", "cooking"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Got it. [PROFILE_UPDATE]{"values": ["honesty"], "personality_traits": ["kind"], "conversation_highlights": ["loves solo hiking"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Makes sense. [PROFILE_UPDATE]{"relationship_goals": "long-term", "deal_breakers": ["dishonesty"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Nice. [PROFILE_UPDATE]{"dating_style": "spontaneous"}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Cool. [PROFILE_UPDATE]{"life_goals": ["travel more"]}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'Got it. [PROFILE_UPDATE]{"communication_style": "direct"}[/PROFILE_UPDATE] [TOPIC_COMPLETE]',
+            'All set. [PROFILE_UPDATE]{"bio": "Adventurous and direct."}[/PROFILE_UPDATE] [ONBOARDING_COMPLETE]',
         ]
 
         mock_resps = []
