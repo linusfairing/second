@@ -27,8 +27,7 @@ function AuthGuard() {
       if (!inOnboarding || secondSegment !== "profile-setup")
         router.replace("/onboarding/profile-setup");
     } else if (!onboardingComplete) {
-      if (!inOnboarding || secondSegment === "profile-setup")
-        router.replace("/onboarding");
+      if (!inOnboarding) router.replace("/onboarding");
     } else {
       if (inAuth || inOnboarding) router.replace("/(tabs)/discover");
     }

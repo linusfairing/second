@@ -18,6 +18,10 @@ class UserProfile(Base):
     personality_traits: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON dict/array
     relationship_goals: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
     communication_style: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
+    deal_breakers: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    life_goals: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    dating_style: Mapped[str | None] = mapped_column(Text, nullable=True)  # string description
+    conversation_highlights: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of quotes/stories
     profile_completeness: Mapped[float] = mapped_column(Float, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

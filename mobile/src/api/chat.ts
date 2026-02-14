@@ -19,3 +19,8 @@ export async function getChatStatus() {
   const res = await client.get<ChatStatusResponse>("/api/v1/chat/status");
   return res.data;
 }
+
+export async function getChatIntro() {
+  const res = await client.get<{ messages: string[] }>("/api/v1/chat/intro");
+  return res.data.messages;
+}

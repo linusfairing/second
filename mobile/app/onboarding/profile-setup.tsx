@@ -14,10 +14,12 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
+import { useRouter } from "expo-router";
 import { useAuth } from "../../src/context/AuthContext";
 import { getMyProfile, submitProfileSetup, uploadPhoto, deletePhoto } from "../../src/api/profile";
 import { PhotoResponse, ProfileSetupRequest } from "../../src/types/api";
 import { photoUrl } from "../../src/config";
+import { getErrorMessage } from "../../src/api/client";
 
 // ── Option Data ──────────────────────────────────────────────────────────
 
@@ -33,11 +35,11 @@ const RELIGION_OPTIONS = [
   "Jewish", "Muslim", "Spiritual", "Other", "Prefer not to say",
 ];
 const CHILDREN_OPTIONS = ["No", "Yes, they live with me", "Yes, they don't live with me"];
-const FAMILY_PLANS_OPTIONS = ["Want someday", "Don't want", "Have and want more", "Have and don't want more", "Not sure"];
-const DRINKING_OPTIONS = ["Never", "Rarely", "Socially", "Regularly"];
-const SMOKING_OPTIONS = ["Never", "Socially", "Regularly", "Trying to quit"];
-const MARIJUANA_OPTIONS = ["Never", "Socially", "Regularly"];
-const DRUGS_OPTIONS = ["Never", "Socially", "Prefer not to say"];
+const WANT_CHILDREN_OPTIONS = ["Want someday", "Don't want", "Have and want more", "Have and don't want more", "Not sure"];
+const DRINKING_OPTIONS = ["No", "Socially", "Yes please!"];
+const SMOKING_OPTIONS = ["No", "Socially", "Yes", "Vape Only"];
+const MARIJUANA_OPTIONS = ["Yes", "Sometimes", "No"];
+const DRUGS_OPTIONS = ["Yes", "Sometimes", "No"];
 
 const HEIGHT_OPTIONS: { label: string; value: number }[] = [];
 for (let inches = 48; inches <= 84; inches++) {
@@ -457,9 +459,9 @@ function DatePickerModal({
   );
 }
 
-// ── Eye Toggle ───────────────────────────────────────────────────────────
+// ── Visibility Controls ──────────────────────────────────────────────────
 
-function EyeToggle({
+function VisibilityToggle({
   field,
   hidden,
   onToggle,
@@ -469,17 +471,29 @@ function EyeToggle({
   onToggle: (field: string) => void;
 }) {
   return (
-    <TouchableOpacity onPress={() => onToggle(field)} style={styles.eyeButton}>
-      <Text style={{ fontSize: 18 }}>{hidden ? "\u{1F648}" : "\u{1F441}"}</Text>
+    <TouchableOpacity onPress={() => onToggle(field)} style={styles.visibilityButton}>
+      <Text style={[styles.visibilityText, hidden ? styles.visibilityHidden : styles.visibilityVisible]}>
+        {hidden ? "Hidden" : "Visible on Profile"}
+      </Text>
     </TouchableOpacity>
+  );
+}
+
+function VisibilityStatic({ label }: { label: string }) {
+  return (
+    <View style={styles.visibilityButton}>
+      <Text style={styles.visibilityStatic}>{label}</Text>
+    </View>
   );
 }
 
 // ── Main Screen ──────────────────────────────────────────────────────────
 
 export default function ProfileSetupScreen() {
-  const { checkOnboarding } = useAuth();
+  const { checkOnboarding, signOut, profileSetupComplete } = useAuth();
+  const router = useRouter();
   const scrollRef = useRef<ScrollView>(null);
+  const isEditing = profileSetupComplete;
 
   // Form state
   const [displayName, setDisplayName] = useState("");
@@ -524,16 +538,33 @@ export default function ProfileSetupScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Load existing photos on mount (supports re-entry)
+  // Load existing profile data on mount (supports re-entry / editing)
   useEffect(() => {
     (async () => {
       try {
-        const profile = await getMyProfile();
-        if (profile.photos && profile.photos.length > 0) {
-          setPhotos(profile.photos);
-        }
+        const p = await getMyProfile();
+        if (p.photos && p.photos.length > 0) setPhotos(p.photos);
+        if (p.display_name) setDisplayName(p.display_name);
+        if (p.date_of_birth) setDob(new Date(p.date_of_birth + "T00:00:00"));
+        if (p.height_inches) setHeightInches(p.height_inches);
+        if (p.location) setLocation(p.location);
+        if (p.home_town) setHomeTown(p.home_town);
+        if (p.gender) setGender(p.gender);
+        if (p.sexual_orientation) setSexualOrientation(p.sexual_orientation);
+        if (p.job_title) setJobTitle(p.job_title);
+        if (p.college_university) setCollegeUniversity(p.college_university);
+        if (p.education_level) setEducationLevel(p.education_level);
+        if (p.languages && p.languages.length > 0) setLanguages(p.languages);
+        if (p.religion) setReligion(p.religion);
+        if (p.children) setChildren(p.children);
+        if (p.family_plans) setFamilyPlans(p.family_plans);
+        if (p.drinking) setDrinking(p.drinking);
+        if (p.smoking) setSmoking(p.smoking);
+        if (p.marijuana) setMarijuana(p.marijuana);
+        if (p.drugs) setDrugs(p.drugs);
+        if (p.hidden_fields) setHiddenFields(p.hidden_fields);
       } catch {
-        // Ignore — user may not have photos yet
+        // Ignore — user may not have a profile yet
       }
     })();
   }, []);
@@ -651,10 +682,13 @@ export default function ProfileSetupScreen() {
       };
 
       await submitProfileSetup(payload);
+      if (isEditing) {
+        router.replace("/onboarding");
+        return;
+      }
       await checkOnboarding();
     } catch (err: any) {
-      const detail = err?.response?.data?.detail;
-      Alert.alert("Error", detail || "Failed to save profile. Please try again.");
+      Alert.alert("Error", getErrorMessage(err, "Failed to save profile. Please try again."));
     } finally {
       setSubmitting(false);
     }
@@ -688,15 +722,29 @@ export default function ProfileSetupScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.title}>Create Your Profile</Text>
+        <View style={styles.headerRow}>
+          <Text style={styles.title}>{isEditing ? "Edit Profile" : "Create Your Profile"}</Text>
+          {isEditing ? (
+            <TouchableOpacity onPress={() => router.replace("/onboarding")}>
+              <Text style={styles.backText}>Back to Chat</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity onPress={signOut}>
+              <Text style={styles.signOutText}>Sign Out</Text>
+            </TouchableOpacity>
+          )}
+        </View>
         <Text style={styles.subtitle}>
-          Fill in your details. Tap the eye icon to hide a field from others.
+          Fill in your details. You can toggle which fields are visible on your profile.
         </Text>
 
         {/* ── Section 1: Basic Info ── */}
         <Text style={styles.sectionTitle}>Basic Info</Text>
 
-        <Text style={styles.label}>Name *</Text>
+        <View style={styles.fieldRow}>
+          <View style={{ flex: 1 }}><Text style={styles.label}>Name *</Text></View>
+          <VisibilityStatic label="Always Visible" />
+        </View>
         <TextInput
           style={[styles.input, errors.displayName && styles.inputError]}
           placeholder="Your name"
@@ -706,7 +754,10 @@ export default function ProfileSetupScreen() {
         />
         {errors.displayName && <Text style={styles.errorText}>{errors.displayName}</Text>}
 
-        <Text style={styles.label}>Date of Birth *</Text>
+        <View style={styles.fieldRow}>
+          <View style={{ flex: 1 }}><Text style={styles.label}>Date of Birth *</Text></View>
+          <VisibilityStatic label="Always Visible" />
+        </View>
         <TouchableOpacity
           style={[styles.pickerButton, errors.dob && styles.inputError]}
           onPress={() => setShowDob(true)}
@@ -717,7 +768,10 @@ export default function ProfileSetupScreen() {
         </TouchableOpacity>
         {errors.dob && <Text style={styles.errorText}>{errors.dob}</Text>}
 
-        <Text style={styles.label}>Height *</Text>
+        <View style={styles.fieldRow}>
+          <View style={{ flex: 1 }}><Text style={styles.label}>Height *</Text></View>
+          <VisibilityStatic label="Always Visible" />
+        </View>
         <TouchableOpacity
           style={[styles.pickerButton, errors.heightInches && styles.inputError]}
           onPress={() => setShowHeight(true)}
@@ -728,7 +782,10 @@ export default function ProfileSetupScreen() {
         </TouchableOpacity>
         {errors.heightInches && <Text style={styles.errorText}>{errors.heightInches}</Text>}
 
-        <Text style={styles.label}>Location *</Text>
+        <View style={styles.fieldRow}>
+          <View style={{ flex: 1 }}><Text style={styles.label}>Location *</Text></View>
+          <VisibilityStatic label="Always Visible" />
+        </View>
         <TextInput
           style={[styles.input, errors.location && styles.inputError]}
           placeholder="City, State"
@@ -742,7 +799,7 @@ export default function ProfileSetupScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Home Town *</Text>
           </View>
-          <EyeToggle field="home_town" hidden={hiddenFields.includes("home_town")} onToggle={toggleHidden} />
+          <VisibilityToggle field="home_town" hidden={hiddenFields.includes("home_town")} onToggle={toggleHidden} />
         </View>
         <TextInput
           style={[styles.input, errors.homeTown && styles.inputError]}
@@ -760,7 +817,7 @@ export default function ProfileSetupScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Gender *</Text>
           </View>
-          <EyeToggle field="gender" hidden={hiddenFields.includes("gender")} onToggle={toggleHidden} />
+          <VisibilityToggle field="gender" hidden={hiddenFields.includes("gender")} onToggle={toggleHidden} />
         </View>
         <TouchableOpacity
           style={[styles.pickerButton, errors.gender && styles.inputError]}
@@ -776,7 +833,7 @@ export default function ProfileSetupScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Sexual Orientation *</Text>
           </View>
-          <EyeToggle field="sexual_orientation" hidden={hiddenFields.includes("sexual_orientation")} onToggle={toggleHidden} />
+          <VisibilityToggle field="sexual_orientation" hidden={hiddenFields.includes("sexual_orientation")} onToggle={toggleHidden} />
         </View>
         <TouchableOpacity
           style={[styles.pickerButton, errors.sexualOrientation && styles.inputError]}
@@ -792,7 +849,7 @@ export default function ProfileSetupScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Job Title *</Text>
           </View>
-          <EyeToggle field="job_title" hidden={hiddenFields.includes("job_title")} onToggle={toggleHidden} />
+          <VisibilityToggle field="job_title" hidden={hiddenFields.includes("job_title")} onToggle={toggleHidden} />
         </View>
         <TextInput
           style={[styles.input, errors.jobTitle && styles.inputError]}
@@ -807,7 +864,7 @@ export default function ProfileSetupScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>College / University *</Text>
           </View>
-          <EyeToggle field="college_university" hidden={hiddenFields.includes("college_university")} onToggle={toggleHidden} />
+          <VisibilityToggle field="college_university" hidden={hiddenFields.includes("college_university")} onToggle={toggleHidden} />
         </View>
         <TextInput
           style={[styles.input, errors.collegeUniversity && styles.inputError]}
@@ -818,7 +875,10 @@ export default function ProfileSetupScreen() {
         />
         {errors.collegeUniversity && <Text style={styles.errorText}>{errors.collegeUniversity}</Text>}
 
-        <Text style={styles.label}>Education Level * <Text style={styles.hint}>(for better matches, not shown on profile)</Text></Text>
+        <View style={styles.fieldRow}>
+          <View style={{ flex: 1 }}><Text style={styles.label}>Education Level *</Text></View>
+          <VisibilityStatic label="Always Hidden" />
+        </View>
         <TouchableOpacity
           style={[styles.pickerButton, errors.educationLevel && styles.inputError]}
           onPress={() => setShowEducation(true)}
@@ -833,7 +893,7 @@ export default function ProfileSetupScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Languages *</Text>
           </View>
-          <EyeToggle field="languages" hidden={hiddenFields.includes("languages")} onToggle={toggleHidden} />
+          <VisibilityToggle field="languages" hidden={hiddenFields.includes("languages")} onToggle={toggleHidden} />
         </View>
         <TouchableOpacity
           style={[styles.pickerButton, errors.languages && styles.inputError]}
@@ -852,7 +912,7 @@ export default function ProfileSetupScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Religion *</Text>
           </View>
-          <EyeToggle field="religion" hidden={hiddenFields.includes("religion")} onToggle={toggleHidden} />
+          <VisibilityToggle field="religion" hidden={hiddenFields.includes("religion")} onToggle={toggleHidden} />
         </View>
         <TouchableOpacity
           style={[styles.pickerButton, errors.religion && styles.inputError]}
@@ -868,7 +928,7 @@ export default function ProfileSetupScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Children *</Text>
           </View>
-          <EyeToggle field="children" hidden={hiddenFields.includes("children")} onToggle={toggleHidden} />
+          <VisibilityToggle field="children" hidden={hiddenFields.includes("children")} onToggle={toggleHidden} />
         </View>
         <TouchableOpacity
           style={[styles.pickerButton, errors.children && styles.inputError]}
@@ -882,9 +942,9 @@ export default function ProfileSetupScreen() {
 
         <View style={styles.fieldRow}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.label}>Family Plans *</Text>
+            <Text style={styles.label}>Want Children? *</Text>
           </View>
-          <EyeToggle field="family_plans" hidden={hiddenFields.includes("family_plans")} onToggle={toggleHidden} />
+          <VisibilityToggle field="family_plans" hidden={hiddenFields.includes("family_plans")} onToggle={toggleHidden} />
         </View>
         <TouchableOpacity
           style={[styles.pickerButton, errors.familyPlans && styles.inputError]}
@@ -903,7 +963,7 @@ export default function ProfileSetupScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Drinking *</Text>
           </View>
-          <EyeToggle field="drinking" hidden={hiddenFields.includes("drinking")} onToggle={toggleHidden} />
+          <VisibilityToggle field="drinking" hidden={hiddenFields.includes("drinking")} onToggle={toggleHidden} />
         </View>
         <TouchableOpacity
           style={[styles.pickerButton, errors.drinking && styles.inputError]}
@@ -919,7 +979,7 @@ export default function ProfileSetupScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Smoking *</Text>
           </View>
-          <EyeToggle field="smoking" hidden={hiddenFields.includes("smoking")} onToggle={toggleHidden} />
+          <VisibilityToggle field="smoking" hidden={hiddenFields.includes("smoking")} onToggle={toggleHidden} />
         </View>
         <TouchableOpacity
           style={[styles.pickerButton, errors.smoking && styles.inputError]}
@@ -935,7 +995,7 @@ export default function ProfileSetupScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Marijuana *</Text>
           </View>
-          <EyeToggle field="marijuana" hidden={hiddenFields.includes("marijuana")} onToggle={toggleHidden} />
+          <VisibilityToggle field="marijuana" hidden={hiddenFields.includes("marijuana")} onToggle={toggleHidden} />
         </View>
         <TouchableOpacity
           style={[styles.pickerButton, errors.marijuana && styles.inputError]}
@@ -951,7 +1011,7 @@ export default function ProfileSetupScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Drugs *</Text>
           </View>
-          <EyeToggle field="drugs" hidden={hiddenFields.includes("drugs")} onToggle={toggleHidden} />
+          <VisibilityToggle field="drugs" hidden={hiddenFields.includes("drugs")} onToggle={toggleHidden} />
         </View>
         <TouchableOpacity
           style={[styles.pickerButton, errors.drugs && styles.inputError]}
@@ -1012,7 +1072,7 @@ export default function ProfileSetupScreen() {
           {submitting ? (
             <ActivityIndicator size="small" color="#fff" />
           ) : (
-            <Text style={styles.submitText}>Continue</Text>
+            <Text style={styles.submitText}>{isEditing ? "Save Changes" : "Continue"}</Text>
           )}
         </TouchableOpacity>
       </ScrollView>
@@ -1026,7 +1086,7 @@ export default function ProfileSetupScreen() {
       <LanguageModal visible={showLanguages} selected={languages} onDone={setLanguages} onClose={() => setShowLanguages(false)} />
       <SelectModal visible={showReligion} title="Religion" options={RELIGION_OPTIONS} selected={religion} onSelect={setReligion} onClose={() => setShowReligion(false)} allowOther />
       <SelectModal visible={showChildren} title="Children" options={CHILDREN_OPTIONS} selected={children} onSelect={setChildren} onClose={() => setShowChildren(false)} />
-      <SelectModal visible={showFamilyPlans} title="Family Plans" options={FAMILY_PLANS_OPTIONS} selected={familyPlans} onSelect={setFamilyPlans} onClose={() => setShowFamilyPlans(false)} />
+      <SelectModal visible={showFamilyPlans} title="Want Children?" options={WANT_CHILDREN_OPTIONS} selected={familyPlans} onSelect={setFamilyPlans} onClose={() => setShowFamilyPlans(false)} />
       <SelectModal visible={showDrinking} title="Drinking" options={DRINKING_OPTIONS} selected={drinking} onSelect={setDrinking} onClose={() => setShowDrinking(false)} />
       <SelectModal visible={showSmoking} title="Smoking" options={SMOKING_OPTIONS} selected={smoking} onSelect={setSmoking} onClose={() => setShowSmoking(false)} />
       <SelectModal visible={showMarijuana} title="Marijuana" options={MARIJUANA_OPTIONS} selected={marijuana} onSelect={setMarijuana} onClose={() => setShowMarijuana(false)} />
@@ -1040,7 +1100,10 @@ export default function ProfileSetupScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fff" },
   content: { paddingHorizontal: 20, paddingBottom: 60 },
-  title: { fontSize: 26, fontWeight: "bold", marginTop: 8, color: "#1a1a1a" },
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8 },
+  title: { fontSize: 26, fontWeight: "bold", color: "#1a1a1a" },
+  signOutText: { fontSize: 14, color: "#e91e63", fontWeight: "600" },
+  backText: { fontSize: 14, color: "#e91e63", fontWeight: "600" },
   subtitle: { fontSize: 14, color: "#888", marginTop: 4, marginBottom: 16 },
   sectionTitle: {
     fontSize: 18,
@@ -1050,7 +1113,6 @@ const styles = StyleSheet.create({
     color: "#e91e63",
   },
   label: { fontSize: 14, fontWeight: "600", color: "#333", marginTop: 12, marginBottom: 4 },
-  hint: { fontSize: 12, fontWeight: "400", color: "#999" },
   input: {
     borderWidth: 1,
     borderColor: "#ddd",
@@ -1074,7 +1136,11 @@ const styles = StyleSheet.create({
   pickerText: { fontSize: 15, color: "#333" },
   pickerPlaceholder: { fontSize: 15, color: "#aaa" },
   fieldRow: { flexDirection: "row", alignItems: "center", marginTop: 12 },
-  eyeButton: { padding: 4, marginLeft: 8 },
+  visibilityButton: { marginLeft: 8, paddingVertical: 4, paddingHorizontal: 8 },
+  visibilityText: { fontSize: 12, fontWeight: "600" },
+  visibilityVisible: { color: "#4caf50" },
+  visibilityHidden: { color: "#f44336" },
+  visibilityStatic: { fontSize: 12, fontWeight: "500", color: "#999" },
   photoCounter: { fontSize: 13, color: "#888", marginBottom: 8 },
   photoGrid: {
     flexDirection: "row",

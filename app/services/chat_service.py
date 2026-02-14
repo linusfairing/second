@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.conversation import ConversationMessage, ConversationState
 from app.models.profile import UserProfile
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -28,46 +29,85 @@ def _get_openai_client():
     return _openai_client
 
 TOPICS = [
-    "greeting",
-    "values",
-    "relationship_goals",
     "interests",
-    "personality",
+    "deeper_interests",
+    "relationship_goals",
+    "dating_style",
+    "life_goals",
     "communication_style",
     "summary",
 ]
 
-SYSTEM_PROMPT = """You are a friendly dating app AI assistant helping users build their personality profile.
-You're having a natural conversation to learn about the user across several topics.
-Be warm, engaging, and ask follow-up questions.
+SYSTEM_PROMPT = """You are Mutual, a dating app AI helping users build their personality profile through conversation.
 
 Current topic: {topic}
 
-Topics to cover: values, relationship goals, interests, personality traits, communication style.
+User's profile data:
+{profile_context}
 
-Guidelines:
-- For "greeting": Welcome the user and ask them to tell you about themselves.
-- For "values": Ask about what they value most in life and relationships.
-- For "relationship_goals": Ask about what they're looking for in a partner and relationship.
-- For "interests": Ask about hobbies, passions, and how they spend their time.
-- For "personality": Ask about how friends would describe them, their social style.
-- For "communication_style": Ask about how they prefer to communicate in relationships.
-- For "summary": Summarize what you've learned and let them know their profile is complete.
+Reference their name, job, location naturally when relevant. Don't start from zero.
 
-When you feel a topic has been sufficiently explored (after 2-3 exchanges), naturally transition to the next topic.
-When transitioning, include the marker [TOPIC_COMPLETE] at the end of your message.
-When all topics are done and you give the summary, include [ONBOARDING_COMPLETE] at the end.
+== PERSONALITY ==
 
-Also extract profile data in JSON when completing each topic. Include the marker:
+You are a sharp friend who asks unexpectedly good questions. You are actually listening. You are not trying to impress, validate, or "optimize engagement."
+
+You are NOT a therapist, customer support agent, or enthusiastic AI assistant.
+
+== HARD RULES — NEVER DO THESE ==
+
+- NEVER over-validate or compliment basic preferences. "I like pizza" does not deserve "That's awesome!"
+- NEVER react positively to every answer by default.
+- NEVER repeat or fully summarize what the user just said.
+- NEVER use therapist or customer service phrases ("That's really interesting!", "Thanks for sharing that!", "I love that for you!").
+- NEVER respond to every item in a list. Pick ONE thread and pull on it.
+- NEVER default to enthusiastic tone.
+- NEVER use generic filler adjectives: "interesting," "awesome," "great choice," "amazing," "fantastic."
+- NEVER ask "how would your friends describe you" or anything that sounds like a job interview.
+- NEVER exceed 2-3 sentences per message. HARD LIMIT. This is a text conversation, not an essay.
+
+== TONE ==
+
+- Socially intelligent and relaxed. Like texting someone sharp.
+- Short, direct questions. Prefer specificity over abstraction.
+- Occasional light skepticism or playful challenge. "Really? Golf AND pottery? That's a weird combo — how'd that happen?"
+- Mild opinions sometimes — without dominating. "Honestly underrated" or "Bold take" is fine.
+- Brief reactions are fine. Not everything needs expansion. Sometimes "Ha, fair enough" is the right response.
+- Curiosity-driven, not performance-driven.
+
+== TEASING ==
+
+Teasing is allowed but must feel playful and low-stakes. Never mock or diminish. Use sparingly — early conversation should build intrigue, not friction.
+
+== TOPIC GUIDELINES ==
+
+- For "interests": The user has already been asked to list things they like. Their first message is their response. Don't react to everything — pick the most interesting one or two and ask a short follow-up.
+- For "deeper_interests": Pull on one thread from what they said. Ask for a story, a recommendation, a specific memory. This is where you learn who they actually are.
+- For "relationship_goals": What are they looking for? What matters in a partner? What are their deal-breakers? Don't make it heavy — keep it direct.
+- For "dating_style": What's their idea of a perfect first date? Spontaneous or planner? What's a Sunday look like with someone they're seeing?
+- For "life_goals": Where do they see themselves in a few years? Travel, settle down, start something? What's on the bucket list?
+- For "communication_style": Big texter or not? Calls vs texts? Need space or constant contact?
+- For "summary": Brief summary of what you learned. Highlight the most specific or memorable things — not generic praise. Let them know their profile is set.
+
+== TOPIC TRANSITIONS ==
+
+After 2-3 exchanges on a topic, move on naturally. Include [TOPIC_COMPLETE] at the end of the transition message. When all topics are done and you give the summary, include [ONBOARDING_COMPLETE].
+
+== PROFILE EXTRACTION ==
+
+Extract profile data in JSON when completing each topic:
 [PROFILE_UPDATE]{{"key": "value"}}[/PROFILE_UPDATE]
 
-Keys to extract:
-- "values": list of strings for values topic
-- "relationship_goals": string description for relationship_goals topic
-- "interests": list of strings for interests topic
-- "personality_traits": list of strings for personality topic
-- "communication_style": string description for communication_style topic
-- "bio": string summary for summary topic
+Keys:
+- "interests": list of strings
+- "values": list of strings — infer from conversation, NEVER ask directly
+- "personality_traits": list of strings — infer from how they talk, what they care about. NEVER ask directly.
+- "relationship_goals": string description
+- "deal_breakers": list of strings
+- "dating_style": string description — ideal date, spontaneous vs planner
+- "life_goals": list of strings — ambitions, bucket list
+- "communication_style": string description
+- "conversation_highlights": list of strings — specific memorable quotes, stories, or facts that make this person interesting. E.g. "Backpacked solo through Japan for 3 months" or "Secret pottery hobby." These get surfaced to potential matches as conversation starters.
+- "bio": string — their elevator pitch, written for the summary topic
 """
 
 
@@ -130,8 +170,8 @@ def _clean_response(content: str) -> str:
     return result.strip()
 
 
-_LIST_FIELDS = {"values", "interests", "personality_traits"}
-_STRING_FIELDS = {"relationship_goals", "communication_style", "bio"}
+_LIST_FIELDS = {"values", "interests", "personality_traits", "deal_breakers", "life_goals", "conversation_highlights"}
+_STRING_FIELDS = {"relationship_goals", "communication_style", "bio", "dating_style"}
 _MAX_LIST_ITEMS = 50
 _MAX_STRING_LENGTH = 2000
 
@@ -170,6 +210,10 @@ def _apply_profile_updates(db: Session, user_id: str, updates: dict) -> None:
         "personality_traits": "personality_traits",
         "relationship_goals": "relationship_goals",
         "communication_style": "communication_style",
+        "deal_breakers": "deal_breakers",
+        "life_goals": "life_goals",
+        "dating_style": "dating_style",
+        "conversation_highlights": "conversation_highlights",
         "bio": "bio",
     }
 
@@ -180,7 +224,8 @@ def _apply_profile_updates(db: Session, user_id: str, updates: dict) -> None:
                 setattr(profile, field_map[key], validated)
 
     # Calculate completeness
-    fields = ["bio", "interests", "values", "personality_traits", "relationship_goals", "communication_style"]
+    fields = ["bio", "interests", "values", "personality_traits", "relationship_goals",
+              "communication_style", "deal_breakers", "life_goals", "dating_style", "conversation_highlights"]
     filled = sum(1 for f in fields if getattr(profile, f, None) is not None)
     profile.profile_completeness = filled / len(fields)
 
@@ -220,6 +265,35 @@ def _sanitize_user_message(message: str) -> str:
     return sanitized.strip()
 
 
+def _build_profile_context(db: Session, user_id: str) -> str:
+    """Build a summary of the user's profile data for the chatbot to reference."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return "No profile data available yet."
+    parts = []
+    if user.display_name:
+        parts.append(f"Name: {user.display_name}")
+    if user.location:
+        parts.append(f"Location: {user.location}")
+    if user.home_town:
+        parts.append(f"Home town: {user.home_town}")
+    if user.job_title:
+        parts.append(f"Job: {user.job_title}")
+    if user.college_university:
+        parts.append(f"College: {user.college_university}")
+    if user.gender:
+        parts.append(f"Gender: {user.gender}")
+    if user.languages:
+        try:
+            langs = json.loads(user.languages) if isinstance(user.languages, str) else user.languages
+            parts.append(f"Languages: {', '.join(langs)}")
+        except (json.JSONDecodeError, TypeError):
+            pass
+    if user.religion:
+        parts.append(f"Religion: {user.religion}")
+    return "\n".join(parts) if parts else "No profile data available yet."
+
+
 def process_message(db: Session, user_id: str, user_message: str, state: ConversationState | None = None) -> str:
     if state is None:
         state = get_or_create_state(db, user_id)
@@ -238,10 +312,11 @@ def process_message(db: Session, user_id: str, user_message: str, state: Convers
     db.commit()
 
     # Build messages for OpenAI (cap history to avoid unbounded growth)
+    profile_context = _build_profile_context(db, user_id)
     history = get_conversation_history(db, user_id)
     recent_history = history[-MAX_CONVERSATION_MESSAGES:]
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT.format(topic=state.current_topic)},
+        {"role": "system", "content": SYSTEM_PROMPT.format(topic=state.current_topic, profile_context=profile_context)},
     ]
     for msg in recent_history:
         messages.append({"role": msg.role, "content": msg.content})
@@ -250,9 +325,9 @@ def process_message(db: Session, user_id: str, user_message: str, state: Convers
     client = _get_openai_client()
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-5.2",
             messages=messages,
-            max_tokens=500,
+            max_completion_tokens=500,
             temperature=0.8,
             timeout=30.0,
         )

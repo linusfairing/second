@@ -47,6 +47,19 @@ def send_chat_message(
     )
 
 
+@router.get("/intro")
+def get_chat_intro(
+    current_user: User = Depends(get_current_user),
+):
+    name = (current_user.display_name or "there").split()[0]
+    return {
+        "messages": [
+            "Hey, I'm Mutual. Just so you know \u2014 I'm an AI, not a real person. I'm here to get to know the real you, not the dating profile version. Everything here stays between us unless you choose otherwise. No wrong answers, and the more real you are with me, the easier it is for me to find someone you'll click with.",
+            f"So {name}, tell me some things you like. Literally anything \u2014 hobbies, TV shows, food, places, something weird, doesn't matter. Just whatever comes to mind.",
+        ]
+    }
+
+
 @router.get("/history", response_model=list[ChatMessageResponse])
 def get_chat_history(
     limit: int = Query(100, ge=1, le=500),

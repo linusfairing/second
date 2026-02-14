@@ -10,7 +10,8 @@ import {
   Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { sendChatMessage, getChatHistory } from "../../src/api/chat";
+import { useRouter } from "expo-router";
+import { sendChatMessage, getChatHistory, getChatIntro } from "../../src/api/chat";
 import { useAuth } from "../../src/context/AuthContext";
 import { ChatMessageResponse } from "../../src/types/api";
 
@@ -22,6 +23,7 @@ interface Message {
 
 export default function OnboardingScreen() {
   const { checkOnboarding } = useAuth();
+  const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -57,13 +59,24 @@ export default function OnboardingScreen() {
   async function sendInitialGreeting() {
     setSending(true);
     try {
-      const res = await sendChatMessage("Hello");
-      const aiMsg: Message = {
+      const introMessages = await getChatIntro();
+      // Show first message immediately
+      const msg1: Message = {
         id: `local-${nextIdRef.current++}`,
         role: "assistant",
-        content: res.reply,
+        content: introMessages[0],
       };
-      setMessages([aiMsg]);
+      setMessages([msg1]);
+      // Show second message after a short delay
+      if (introMessages[1]) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const msg2: Message = {
+          id: `local-${nextIdRef.current++}`,
+          role: "assistant",
+          content: introMessages[1],
+        };
+        setMessages((prev) => [...prev, msg2]);
+      }
     } catch (err) {
       console.error("Failed to start onboarding:", err);
       const errMsg: Message = {
@@ -139,7 +152,12 @@ export default function OnboardingScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Let's get to know you</Text>
+          <View style={styles.headerRow}>
+            <Text style={styles.headerTitle}>Let's get to know you</Text>
+            <TouchableOpacity onPress={() => router.push("/onboarding/profile-setup")}>
+              <Text style={styles.editProfileText}>Edit Profile</Text>
+            </TouchableOpacity>
+          </View>
           <Text style={styles.headerSubtitle}>
             Answer a few questions to set up your profile
           </Text>
@@ -181,7 +199,9 @@ export default function OnboardingScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fff" },
   header: { paddingHorizontal: 24, paddingBottom: 16 },
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   headerTitle: { fontSize: 22, fontWeight: "bold" },
+  editProfileText: { fontSize: 14, color: "#e91e63", fontWeight: "600" },
   headerSubtitle: { fontSize: 14, color: "#888", marginTop: 4 },
   messageList: { paddingHorizontal: 16, paddingBottom: 8 },
   messageBubble: {

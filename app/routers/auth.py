@@ -31,7 +31,7 @@ def signup(request: SignupRequest, raw_request: Request = None, db: Session = De
     hashed = hash_password(request.password)
     existing = db.query(User).filter(User.email == email).first()
     if existing:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Registration failed")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An account with this email already exists")
 
     user = User(
         email=email,

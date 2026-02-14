@@ -56,4 +56,22 @@ client.interceptors.response.use(
   }
 );
 
+/** Extract a human-readable error message from an API error response. */
+export function getErrorMessage(err: any, fallback: string): string {
+  const detail = err?.response?.data?.detail;
+  if (!detail) return fallback;
+  if (typeof detail === "string") return detail;
+  // Pydantic validation errors: array of { msg, loc }
+  if (Array.isArray(detail)) {
+    return detail
+      .map((e: any) => {
+        const field = e.loc?.slice(-1)[0];
+        const msg: string = e.msg || "Invalid value";
+        return field ? `${field}: ${msg}` : msg;
+      })
+      .join("\n");
+  }
+  return fallback;
+}
+
 export default client;

@@ -57,7 +57,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await fetchOnboardingStatus();
       }
     } catch {
-      // Token invalid or expired — stay logged out
+      // Token invalid or expired — clear stale session
+      setCachedToken(null);
+      setToken(null);
+      setUserId(null);
+      await SecureStore.deleteItemAsync("token");
+      await SecureStore.deleteItemAsync("userId");
+      await SecureStore.deleteItemAsync("profileSetupComplete");
+      await SecureStore.deleteItemAsync("onboardingComplete");
     } finally {
       setIsLoading(false);
     }
@@ -72,7 +79,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setOnboardingComplete(completed);
       await SecureStore.setItemAsync("profileSetupComplete", setupDone ? "1" : "0");
       await SecureStore.setItemAsync("onboardingComplete", completed ? "1" : "0");
-    } catch {
+    } catch (err: any) {
+      // Auth error — re-throw so restoreSession can clear stale tokens
+      if (err?.response?.status === 401) throw err;
       // Network failed — fall back to cached values
       const cachedSetup = await SecureStore.getItemAsync("profileSetupComplete");
       const cachedOnboarding = await SecureStore.getItemAsync("onboardingComplete");
@@ -85,9 +94,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.setItemAsync("token", newToken);
     await SecureStore.setItemAsync("userId", newUserId);
     setCachedToken(newToken);
+    // Fetch onboarding status BEFORE setting token in React state,
+    // so the auth guard has correct values when it first fires
+    await fetchOnboardingStatus();
     setToken(newToken);
     setUserId(newUserId);
-    await fetchOnboardingStatus();
   }
 
   async function signOut() {

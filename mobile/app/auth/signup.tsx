@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Link } from "expo-router";
 import { signup } from "../../src/api/auth";
+import { getErrorMessage } from "../../src/api/client";
 import { useAuth } from "../../src/context/AuthContext";
 
 export default function SignupScreen() {
@@ -39,8 +40,7 @@ export default function SignupScreen() {
       const res = await signup(email.toLowerCase().trim(), password);
       await signIn(res.access_token, res.user_id);
     } catch (err: any) {
-      const msg = err.response?.data?.detail || "Signup failed. Please try again.";
-      Alert.alert("Error", msg);
+      Alert.alert("Error", getErrorMessage(err, "Signup failed. Please try again."));
     } finally {
       setLoading(false);
     }
