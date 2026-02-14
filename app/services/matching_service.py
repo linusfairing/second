@@ -11,19 +11,33 @@ DIMENSION_WEIGHTS = {
 }
 
 
+def _tokenize(text: str) -> set[str]:
+    """Split a string into lowercase word tokens for fuzzy matching."""
+    import re
+    words = re.split(r'[\s,;/&|]+', text.lower().strip())
+    # Strip leading/trailing punctuation from each token
+    return {w for w in (re.sub(r'^[^\w]+|[^\w]+$', '', t) for t in words) if w}
+
+
 def _parse_field(value: str | None) -> set[str]:
     if not value:
         return set()
     try:
         parsed = json.loads(value)
         if isinstance(parsed, list):
-            return {str(item).lower().strip() for item in parsed}
+            tokens: set[str] = set()
+            for item in parsed:
+                tokens |= _tokenize(str(item))
+            return tokens
         if isinstance(parsed, str):
-            return {parsed.lower().strip()}
+            return _tokenize(parsed)
         if isinstance(parsed, dict):
-            return {str(v).lower().strip() for v in parsed.values()}
+            tokens = set()
+            for v in parsed.values():
+                tokens |= _tokenize(str(v))
+            return tokens
     except (json.JSONDecodeError, TypeError):
-        return {value.lower().strip()}
+        return _tokenize(value)
     return set()
 
 

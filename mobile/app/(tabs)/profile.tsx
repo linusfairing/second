@@ -17,6 +17,23 @@ import { useAuth } from "../../src/context/AuthContext";
 import { UserResponse } from "../../src/types/api";
 import { photoUrl } from "../../src/config";
 
+function ProfileField({ label, value }: { label: string; value: string | null | undefined }) {
+  if (!value) return null;
+  return (
+    <View style={styles.section}>
+      <Text style={styles.label}>{label}</Text>
+      <Text style={styles.value}>{value}</Text>
+    </View>
+  );
+}
+
+function formatHeight(inches: number | null | undefined): string | null {
+  if (inches == null) return null;
+  const ft = Math.floor(inches / 12);
+  const rem = inches % 12;
+  return `${ft}'${rem}"`;
+}
+
 export default function ProfileScreen() {
   const { signOut } = useAuth();
   const [profile, setProfile] = useState<UserResponse | null>(null);
@@ -114,47 +131,57 @@ export default function ProfileScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>Profile</Text>
 
-        <View style={styles.section}>
-          <Text style={styles.label}>Email</Text>
-          <Text style={styles.value}>{profile.email}</Text>
-        </View>
-
-        {profile.display_name && (
-          <View style={styles.section}>
-            <Text style={styles.label}>Name</Text>
-            <Text style={styles.value}>{profile.display_name}</Text>
-          </View>
-        )}
-
-        {profile.gender && (
-          <View style={styles.section}>
-            <Text style={styles.label}>Gender</Text>
-            <Text style={styles.value}>{profile.gender}</Text>
-          </View>
-        )}
-
-        {profile.location && (
-          <View style={styles.section}>
-            <Text style={styles.label}>Location</Text>
-            <Text style={styles.value}>{profile.location}</Text>
-          </View>
-        )}
+        <ProfileField label="Email" value={profile.email} />
+        <ProfileField label="Name" value={profile.display_name} />
+        <ProfileField label="Gender" value={profile.gender} />
+        <ProfileField label="Location" value={profile.location} />
+        <ProfileField label="Home Town" value={profile.home_town} />
+        <ProfileField label="Height" value={formatHeight(profile.height_inches)} />
+        <ProfileField label="Sexual Orientation" value={profile.sexual_orientation} />
+        <ProfileField label="Job Title" value={profile.job_title} />
+        <ProfileField label="College / University" value={profile.college_university} />
+        <ProfileField label="Education Level" value={profile.education_level} />
+        <ProfileField
+          label="Languages"
+          value={profile.languages?.join(", ") || null}
+        />
+        <ProfileField label="Religion" value={profile.religion} />
+        <ProfileField label="Children" value={profile.children} />
+        <ProfileField label="Family Plans" value={profile.family_plans} />
+        <ProfileField label="Drinking" value={profile.drinking} />
+        <ProfileField label="Smoking" value={profile.smoking} />
+        <ProfileField label="Marijuana" value={profile.marijuana} />
+        <ProfileField label="Drugs" value={profile.drugs} />
 
         {profile.profile?.bio && (
-          <View style={styles.section}>
-            <Text style={styles.label}>Bio</Text>
-            <Text style={styles.value}>{profile.profile.bio}</Text>
-          </View>
+          <ProfileField label="Bio" value={profile.profile.bio} />
         )}
-
         {profile.profile?.interests && profile.profile.interests.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.label}>Interests</Text>
-            <Text style={styles.value}>
-              {profile.profile.interests.join(", ")}
-            </Text>
-          </View>
+          <ProfileField
+            label="Interests"
+            value={profile.profile.interests.join(", ")}
+          />
         )}
+        {profile.profile?.values && profile.profile.values.length > 0 && (
+          <ProfileField
+            label="Values"
+            value={profile.profile.values.join(", ")}
+          />
+        )}
+        {profile.profile?.personality_traits && profile.profile.personality_traits.length > 0 && (
+          <ProfileField
+            label="Personality Traits"
+            value={profile.profile.personality_traits.join(", ")}
+          />
+        )}
+        <ProfileField
+          label="Relationship Goals"
+          value={profile.profile?.relationship_goals}
+        />
+        <ProfileField
+          label="Communication Style"
+          value={profile.profile?.communication_style}
+        />
 
         <View style={styles.section}>
           <Text style={styles.label}>Photos</Text>

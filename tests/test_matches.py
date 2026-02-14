@@ -108,3 +108,46 @@ class TestUnmatch:
         _, token1 = create_user(email="unf@test.com")
         r = client.delete("/api/v1/matches/nonexistent-id", headers=auth_headers(token1))
         assert r.status_code == 404
+
+    def test_unmatch_converts_likes_to_passes(self, client, create_user, auth_headers, db):
+        from app.models.match import Like
+
+        user1, token1 = create_user(email="ulp1@test.com")
+        user2, token2 = create_user(email="ulp2@test.com")
+
+        client.post("/api/v1/matches/like", json={"liked_user_id": user2.id}, headers=auth_headers(token1))
+        r = client.post("/api/v1/matches/like", json={"liked_user_id": user1.id}, headers=auth_headers(token2))
+        match_id = r.json()["match_id"]
+
+        # Unmatch
+        r = client.delete(f"/api/v1/matches/{match_id}", headers=auth_headers(token1))
+        assert r.status_code == 204
+
+        # Likes should now be passes
+        likes = db.query(Like).filter(
+            ((Like.liker_id == user1.id) & (Like.liked_id == user2.id))
+            | ((Like.liker_id == user2.id) & (Like.liked_id == user1.id))
+        ).all()
+        assert len(likes) == 2
+        assert all(like.is_pass for like in likes)
+
+        # Users should NOT be able to re-like each other (409)
+        r = client.post(
+            "/api/v1/matches/like",
+            json={"liked_user_id": user2.id},
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 409
+
+    def test_unmatch_forbidden_for_non_member(self, client, create_user, auth_headers):
+        user1, token1 = create_user(email="ufm1@test.com")
+        user2, token2 = create_user(email="ufm2@test.com")
+        _, token3 = create_user(email="ufm3@test.com")
+
+        client.post("/api/v1/matches/like", json={"liked_user_id": user2.id}, headers=auth_headers(token1))
+        r = client.post("/api/v1/matches/like", json={"liked_user_id": user1.id}, headers=auth_headers(token2))
+        match_id = r.json()["match_id"]
+
+        # User3 is not part of this match
+        r = client.delete(f"/api/v1/matches/{match_id}", headers=auth_headers(token3))
+        assert r.status_code == 403

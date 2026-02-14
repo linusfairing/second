@@ -20,7 +20,7 @@ class ProfileSetupRequest(BaseModel):
     job_title: str = Field(..., min_length=1, max_length=200)
     college_university: str = Field(..., min_length=1, max_length=200)
     education_level: str = Field(..., min_length=1, max_length=100)
-    languages: list[str] = Field(..., min_length=1)
+    languages: list[str] = Field(..., min_length=1, max_length=20)
     religion: str = Field(..., min_length=1, max_length=100)
     children: str = Field(..., min_length=1, max_length=100)
     family_plans: str = Field(..., min_length=1, max_length=100)
@@ -28,7 +28,7 @@ class ProfileSetupRequest(BaseModel):
     smoking: str = Field(..., min_length=1, max_length=50)
     marijuana: str = Field(..., min_length=1, max_length=50)
     drugs: str = Field(..., min_length=1, max_length=50)
-    hidden_fields: list[str] = Field(default_factory=list)
+    hidden_fields: list[str] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def validate_hidden_fields(self):
@@ -39,10 +39,10 @@ class ProfileSetupRequest(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    display_name: str | None = Field(None, max_length=100)
+    display_name: str | None = Field(None, min_length=1, max_length=100)
     date_of_birth: date | None = None
     gender: str | None = Field(None, max_length=30)
-    gender_preference: list[str] | None = None
+    gender_preference: list[str] | None = Field(None, max_length=10)
     location: str | None = Field(None, max_length=100)
     age_range_min: int | None = Field(None, ge=18, le=120)
     age_range_max: int | None = Field(None, ge=18, le=120)
@@ -52,7 +52,7 @@ class UserUpdate(BaseModel):
     job_title: str | None = Field(None, max_length=200)
     college_university: str | None = Field(None, max_length=200)
     education_level: str | None = Field(None, max_length=100)
-    languages: list[str] | None = None
+    languages: list[str] | None = Field(None, max_length=20)
     religion: str | None = Field(None, max_length=100)
     children: str | None = Field(None, max_length=100)
     family_plans: str | None = Field(None, max_length=100)
@@ -60,7 +60,7 @@ class UserUpdate(BaseModel):
     smoking: str | None = Field(None, max_length=50)
     marijuana: str | None = Field(None, max_length=50)
     drugs: str | None = Field(None, max_length=50)
-    hidden_fields: list[str] | None = None
+    hidden_fields: list[str] | None = Field(None, max_length=20)
 
     @model_validator(mode="after")
     def check_age_range(self):
@@ -80,9 +80,9 @@ class UserUpdate(BaseModel):
 
 class ProfileUpdate(BaseModel):
     bio: str | None = Field(None, max_length=2000)
-    interests: list[str] | None = None
-    values: list[str] | None = None
-    personality_traits: list[str] | None = None
+    interests: list[str] | None = Field(None, max_length=50)
+    values: list[str] | None = Field(None, max_length=50)
+    personality_traits: list[str] | None = Field(None, max_length=50)
     relationship_goals: str | None = Field(None, max_length=200)
     communication_style: str | None = Field(None, max_length=200)
 

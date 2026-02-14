@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { Slot, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../src/context/AuthContext";
 
 // Hide splash screen immediately — we use our own loading spinner instead
@@ -46,8 +47,10 @@ function AuthGuard() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <AuthGuard />
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <AuthGuard />
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }

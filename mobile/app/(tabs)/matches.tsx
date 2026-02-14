@@ -96,7 +96,7 @@ export default function MatchesScreen() {
       {error ? (
         <View style={styles.center}>
           <Text style={styles.errorText}>Something went wrong</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={loadMatches}>
+          <TouchableOpacity style={styles.retryButton} onPress={() => loadMatches()}>
             <Text style={styles.retryText}>Retry</Text>
           </TouchableOpacity>
         </View>

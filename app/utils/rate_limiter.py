@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 from collections import defaultdict
 
@@ -26,6 +27,7 @@ class InMemoryRateLimiter:
         self._requests: dict[str, list[float]] = defaultdict(list)
         self._last_cleanup: float = time.time()
         self._cleanup_interval: float = 300.0
+        self._lock = threading.Lock()
 
     def _maybe_cleanup(self, now: float) -> None:
         if now - self._last_cleanup < self._cleanup_interval:
@@ -38,15 +40,16 @@ class InMemoryRateLimiter:
 
     def check(self, key: str) -> None:
         now = time.time()
-        self._maybe_cleanup(now)
-        cutoff = now - self.window_seconds
-        self._requests[key] = [t for t in self._requests[key] if t > cutoff]
-        if len(self._requests[key]) >= self.max_requests:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Rate limit exceeded. Maximum {self.max_requests} requests per minute.",
-            )
-        self._requests[key].append(now)
+        with self._lock:
+            self._maybe_cleanup(now)
+            cutoff = now - self.window_seconds
+            self._requests[key] = [t for t in self._requests[key] if t > cutoff]
+            if len(self._requests[key]) >= self.max_requests:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Rate limit exceeded. Maximum {self.max_requests} requests per minute.",
+                )
+            self._requests[key].append(now)
 
 
 # ---------------------------------------------------------------------------
@@ -57,12 +60,25 @@ class InMemoryRateLimiter:
 class RedisRateLimiter:
     """Sliding-window rate limiter backed by Redis sorted sets.
 
-    Each request is stored as a member with its timestamp as the score.
-    On each check we:
-      1. Remove entries outside the window.
-      2. Count remaining entries.
-      3. If under the limit, add the new entry.
-    All three steps run in a single pipeline (atomic round-trip).
+    Uses a Lua script for atomic check-and-add to avoid race conditions
+    where concurrent requests could both pass the check before either adds.
+    """
+
+    _LUA_SCRIPT = """
+    local key = KEYS[1]
+    local now = tonumber(ARGV[1])
+    local cutoff = tonumber(ARGV[2])
+    local max_requests = tonumber(ARGV[3])
+    local window = tonumber(ARGV[4])
+
+    redis.call('ZREMRANGEBYSCORE', key, 0, cutoff)
+    local count = redis.call('ZCARD', key)
+    if count >= max_requests then
+        return 0
+    end
+    redis.call('ZADD', key, now, tostring(now) .. ':' .. tostring(math.random(1000000)))
+    redis.call('EXPIRE', key, window + 1)
+    return 1
     """
 
     def __init__(self, redis_client, max_requests: int, window_seconds: int, name: str = ""):
@@ -70,25 +86,18 @@ class RedisRateLimiter:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self.name = name
+        self._script = self._redis.register_script(self._LUA_SCRIPT)
 
     def check(self, key: str) -> None:
         now = time.time()
         redis_key = f"ratelimit:{self.name}:{key}"
         cutoff = now - self.window_seconds
 
-        pipe = self._redis.pipeline()
-        pipe.zremrangebyscore(redis_key, 0, cutoff)
-        pipe.zcard(redis_key)
-        pipe.zadd(redis_key, {f"{now}": now})
-        pipe.expire(redis_key, self.window_seconds + 1)
-        results = pipe.execute()
-
-        current_count = results[1]  # zcard result (before the zadd)
-        if current_count >= self.max_requests:
-            # Remove the entry we just added since we're over the limit
-            pipe2 = self._redis.pipeline()
-            pipe2.zrem(redis_key, f"{now}")
-            pipe2.execute()
+        allowed = self._script(
+            keys=[redis_key],
+            args=[now, cutoff, self.max_requests, self.window_seconds],
+        )
+        if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=f"Rate limit exceeded. Maximum {self.max_requests} requests per minute.",
@@ -143,4 +152,6 @@ def create_rate_limiter(max_requests: int, window_seconds: int, name: str = ""):
 # Pre-built limiters used by routers
 chat_rate_limiter = create_rate_limiter(max_requests=30, window_seconds=60, name="chat")
 auth_rate_limiter = create_rate_limiter(max_requests=10, window_seconds=60, name="auth")
+# IP-based limiter for auth endpoints — prevents lockout attacks via email
+auth_ip_rate_limiter = create_rate_limiter(max_requests=30, window_seconds=60, name="auth_ip")
 message_rate_limiter = create_rate_limiter(max_requests=60, window_seconds=60, name="msg")

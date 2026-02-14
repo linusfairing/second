@@ -8,9 +8,13 @@ from app.models.user import User
 from app.models.profile import UserProfile
 from app.schemas.chat import ChatRequest, ChatResponse, ChatMessageResponse, ChatStatusResponse
 from app.services.chat_service import process_message, get_conversation_history, get_or_create_state
+
 from app.utils.rate_limiter import chat_rate_limiter
 
 router = APIRouter()
+
+ONBOARDING_COMPLETED = "completed"
+ONBOARDING_IN_PROGRESS = "in_progress"
 
 
 @router.post("", response_model=ChatResponse)
@@ -28,13 +32,13 @@ def send_chat_message(
     chat_rate_limiter.check(current_user.id)
 
     state = get_or_create_state(db, current_user.id)
-    if state.onboarding_status == "completed":
+    if state.onboarding_status == ONBOARDING_COMPLETED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Onboarding already completed. Use your profile to make changes.",
         )
 
-    reply = process_message(db, current_user.id, request.message)
+    reply = process_message(db, current_user.id, request.message, state=state)
 
     return ChatResponse(
         reply=reply,

@@ -1,29 +1,41 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db
 from app.models.user import User
 from app.schemas.auth import SignupRequest, LoginRequest, TokenResponse
 from app.services.auth_service import hash_password, verify_password, create_access_token
-from app.utils.rate_limiter import auth_rate_limiter
+from app.utils.rate_limiter import auth_rate_limiter, auth_ip_rate_limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 @router.post("/signup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-def signup(request: SignupRequest, db: Session = Depends(get_db)):
+def signup(request: SignupRequest, raw_request: Request = None, db: Session = Depends(get_db)):
+    client_ip = _get_client_ip(raw_request) if raw_request else "unknown"
+    auth_ip_rate_limiter.check(client_ip)
     auth_rate_limiter.check(request.email.lower())
     email = request.email.lower()
+
+    # Always hash to prevent timing-based email enumeration
+    hashed = hash_password(request.password)
     existing = db.query(User).filter(User.email == email).first()
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Registration failed")
 
     user = User(
         email=email,
-        hashed_password=hash_password(request.password),
+        hashed_password=hashed,
     )
     db.add(user)
     db.commit()
@@ -35,7 +47,9 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(request: LoginRequest, db: Session = Depends(get_db)):
+def login(request: LoginRequest, raw_request: Request = None, db: Session = Depends(get_db)):
+    client_ip = _get_client_ip(raw_request) if raw_request else "unknown"
+    auth_ip_rate_limiter.check(client_ip)
     auth_rate_limiter.check(request.email.lower())
     user = db.query(User).filter(User.email == request.email.lower()).first()
     if not user:

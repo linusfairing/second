@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.config import settings, _INSECURE_DEFAULT
+from app.config import settings
 from app.database import engine, Base
 from app.models import User, UserPhoto, UserProfile, ConversationMessage, ConversationState, Like, Match, DirectMessage, BlockedUser  # noqa: F401
 
@@ -33,6 +33,16 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    return response
 
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 

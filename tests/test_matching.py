@@ -43,13 +43,14 @@ class TestParseField:
         assert _parse_field('["Hiking", "Reading"]') == {"hiking", "reading"}
 
     def test_json_string(self):
-        assert _parse_field('"Direct and open"') == {"direct and open"}
+        # Word-level tokenization splits into individual words
+        assert _parse_field('"Direct and open"') == {"direct", "and", "open"}
 
     def test_json_dict(self):
         assert _parse_field('{"a": "Honesty", "b": "Growth"}') == {"honesty", "growth"}
 
     def test_plain_string_fallback(self):
-        assert _parse_field("Long-term relationship") == {"long-term relationship"}
+        assert _parse_field("Long-term relationship") == {"long-term", "relationship"}
 
     def test_strips_whitespace(self):
         assert _parse_field('["  hiking  ", " reading "]') == {"hiking", "reading"}

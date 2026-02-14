@@ -83,6 +83,39 @@ class TestDiscoverFiltering:
         ids = [u["id"] for u in r.json()["users"]]
         assert user2.id not in ids
 
+    def test_bidirectional_gender_preference(self, client, create_user, auth_headers):
+        """User should not see candidates who don't want to see them."""
+        _, token1 = create_user(
+            email="bgp1@test.com", gender="male", gender_preference='["female"]',
+        )
+        # Female who ONLY wants females - should NOT appear for male user
+        user_no, _ = create_user(
+            email="bgp2@test.com", gender="female", gender_preference='["female"]',
+        )
+        # Female who wants males - should appear
+        user_yes, _ = create_user(
+            email="bgp3@test.com", gender="female", gender_preference='["male"]',
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        ids = [u["id"] for u in r.json()["users"]]
+        assert user_yes.id in ids
+        assert user_no.id not in ids
+
+    def test_excludes_users_without_profile_setup(self, client, create_user, auth_headers):
+        _, token1 = create_user(
+            email="eps1@test.com", gender="male", gender_preference='["female"]',
+        )
+        # User without profile_setup_complete should not appear
+        user_incomplete, _ = create_user(
+            email="eps2@test.com", gender="female", gender_preference='["male"]',
+            profile_setup_complete=False,
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        ids = [u["id"] for u in r.json()["users"]]
+        assert user_incomplete.id not in ids
+
     def test_excludes_blocked_users(self, client, create_user, auth_headers):
         _, token1 = create_user(
             email="eb1@test.com", gender="male", gender_preference='["female"]',

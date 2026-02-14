@@ -15,7 +15,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import { useAuth } from "../../src/context/AuthContext";
-import { submitProfileSetup, uploadPhoto, deletePhoto } from "../../src/api/profile";
+import { getMyProfile, submitProfileSetup, uploadPhoto, deletePhoto } from "../../src/api/profile";
 import { PhotoResponse, ProfileSetupRequest } from "../../src/types/api";
 import { photoUrl } from "../../src/config";
 
@@ -190,7 +190,7 @@ function HeightModal({
             data={HEIGHT_OPTIONS}
             keyExtractor={(item) => String(item.value)}
             initialScrollIndex={
-              selected ? HEIGHT_OPTIONS.findIndex((h) => h.value === selected) : 20
+              selected ? Math.max(0, HEIGHT_OPTIONS.findIndex((h) => h.value === selected)) : 20
             }
             getItemLayout={(_, index) => ({
               length: 48,
@@ -523,6 +523,20 @@ export default function ProfileSetupScreen() {
 
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Load existing photos on mount (supports re-entry)
+  useEffect(() => {
+    (async () => {
+      try {
+        const profile = await getMyProfile();
+        if (profile.photos && profile.photos.length > 0) {
+          setPhotos(profile.photos);
+        }
+      } catch {
+        // Ignore — user may not have photos yet
+      }
+    })();
+  }, []);
 
   function toggleHidden(field: string) {
     setHiddenFields((prev) =>

@@ -64,6 +64,7 @@ export default function DiscoverScreen() {
     try {
       const res = await likeUser(currentUser.id);
       if (res.is_match) {
+        if (matchTimerRef.current) clearTimeout(matchTimerRef.current);
         setMatchAlert(currentUser.display_name || "Someone");
         matchTimerRef.current = setTimeout(() => setMatchAlert(null), 2500);
       }
@@ -108,7 +109,7 @@ export default function DiscoverScreen() {
     return (
       <View style={styles.center}>
         <Text style={styles.errorText}>Something went wrong</Text>
-        <TouchableOpacity style={styles.refreshButton} onPress={loadUsers}>
+        <TouchableOpacity style={styles.refreshButton} onPress={() => loadUsers()}>
           <Text style={styles.refreshText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -119,7 +120,7 @@ export default function DiscoverScreen() {
     return (
       <View style={styles.center}>
         <Text style={styles.emptyText}>No more people to discover</Text>
-        <TouchableOpacity style={styles.refreshButton} onPress={loadUsers}>
+        <TouchableOpacity style={styles.refreshButton} onPress={() => loadUsers()}>
           <Text style={styles.refreshText}>Refresh</Text>
         </TouchableOpacity>
       </View>

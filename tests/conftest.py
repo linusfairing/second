@@ -60,9 +60,11 @@ def client(_test_db):
 
 
 @pytest.fixture(autouse=True)
-def _reset_rate_limiter():
-    from app.utils.rate_limiter import chat_rate_limiter
-    chat_rate_limiter._requests.clear()
+def _reset_rate_limiters():
+    from app.utils.rate_limiter import chat_rate_limiter, auth_rate_limiter, auth_ip_rate_limiter, message_rate_limiter
+    for limiter in (chat_rate_limiter, auth_rate_limiter, auth_ip_rate_limiter, message_rate_limiter):
+        if hasattr(limiter, "_requests"):
+            limiter._requests.clear()
 
 
 @pytest.fixture()

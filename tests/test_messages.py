@@ -78,3 +78,47 @@ class TestMessageBlockCheck:
         )
         assert r.status_code == 403
         assert "blocked" in r.json()["detail"].lower()
+
+    def test_blocked_user_cannot_read_messages(self, client, create_user, auth_headers, db):
+        user1, token1, user2, token2, match_id = _create_match(client, create_user, auth_headers)
+
+        # Send a message first
+        client.post(
+            f"/api/v1/matches/{match_id}/messages",
+            json={"content": "Before block"},
+            headers=auth_headers(token1),
+        )
+
+        # Block user1
+        block = BlockedUser(blocker_id=user2.id, blocked_id=user1.id)
+        db.add(block)
+        db.commit()
+
+        r = client.get(
+            f"/api/v1/matches/{match_id}/messages",
+            headers=auth_headers(token1),
+        )
+        assert r.status_code == 403
+
+
+class TestMessageMatchMembership:
+    def test_non_member_cannot_send_message(self, client, create_user, auth_headers):
+        _, _, _, _, match_id = _create_match(client, create_user, auth_headers)
+        _, token3 = create_user(email="nm1@test.com")
+
+        r = client.post(
+            f"/api/v1/matches/{match_id}/messages",
+            json={"content": "Hi"},
+            headers=auth_headers(token3),
+        )
+        assert r.status_code == 403
+
+    def test_non_member_cannot_read_messages(self, client, create_user, auth_headers):
+        _, _, _, _, match_id = _create_match(client, create_user, auth_headers)
+        _, token3 = create_user(email="nm2@test.com")
+
+        r = client.get(
+            f"/api/v1/matches/{match_id}/messages",
+            headers=auth_headers(token3),
+        )
+        assert r.status_code == 403

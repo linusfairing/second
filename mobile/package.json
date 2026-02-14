@@ -10,6 +10,7 @@
     "backend": "cd .. && uvicorn app.main:app --reload --host 0.0.0.0"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.0.3",
     "axios": "^1.13.5",
     "expo": "~54.0.33",
     "expo-constants": "~18.0.13",

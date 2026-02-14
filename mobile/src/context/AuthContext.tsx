@@ -51,6 +51,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const storedToken = await SecureStore.getItemAsync("token");
       const storedUserId = await SecureStore.getItemAsync("userId");
       if (storedToken && storedUserId) {
+        setCachedToken(storedToken);
         setToken(storedToken);
         setUserId(storedUserId);
         await fetchOnboardingStatus();

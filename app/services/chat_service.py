@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 
 from fastapi import HTTPException, status
 from openai import OpenAI, OpenAIError
@@ -11,15 +12,19 @@ from app.models.profile import UserProfile
 
 logger = logging.getLogger(__name__)
 
+ONBOARDING_COMPLETED = "completed"
 MAX_CONVERSATION_MESSAGES = 200
 
 _openai_client = None
+_openai_lock = threading.Lock()
 
 
 def _get_openai_client():
     global _openai_client
     if _openai_client is None:
-        _openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        with _openai_lock:
+            if _openai_client is None:
+                _openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
     return _openai_client
 
 TOPICS = [
@@ -125,6 +130,31 @@ def _clean_response(content: str) -> str:
     return result.strip()
 
 
+_LIST_FIELDS = {"values", "interests", "personality_traits"}
+_STRING_FIELDS = {"relationship_goals", "communication_style", "bio"}
+_MAX_LIST_ITEMS = 50
+_MAX_STRING_LENGTH = 2000
+
+
+def _validate_profile_value(key: str, value) -> str | None:
+    """Validate and serialize a profile value from LLM output. Returns JSON/string or None."""
+    if key in _LIST_FIELDS:
+        if isinstance(value, list):
+            # Ensure all items are strings and cap length
+            cleaned = [str(v)[:200] for v in value[:_MAX_LIST_ITEMS] if v]
+            return json.dumps(cleaned) if cleaned else None
+        if isinstance(value, str):
+            return json.dumps([value[:200]])
+        return None
+    if key in _STRING_FIELDS:
+        if isinstance(value, str):
+            return value[:_MAX_STRING_LENGTH]
+        if isinstance(value, list):
+            return ", ".join(str(v) for v in value)[:_MAX_STRING_LENGTH]
+        return str(value)[:_MAX_STRING_LENGTH]
+    return None
+
+
 def _apply_profile_updates(db: Session, user_id: str, updates: dict) -> None:
     if not updates:
         return
@@ -145,11 +175,9 @@ def _apply_profile_updates(db: Session, user_id: str, updates: dict) -> None:
 
     for key, value in updates.items():
         if key in field_map:
-            attr = field_map[key]
-            if isinstance(value, (list, dict)):
-                setattr(profile, attr, json.dumps(value))
-            else:
-                setattr(profile, attr, str(value))
+            validated = _validate_profile_value(key, value)
+            if validated is not None:
+                setattr(profile, field_map[key], validated)
 
     # Calculate completeness
     fields = ["bio", "interests", "values", "personality_traits", "relationship_goals", "communication_style"]
@@ -176,7 +204,7 @@ def _advance_topic(db: Session, state: ConversationState, ai_response: str) -> N
             state.current_topic = TOPICS[current_idx + 1]
 
     if "[ONBOARDING_COMPLETE]" in ai_response:
-        state.onboarding_status = "completed"
+        state.onboarding_status = ONBOARDING_COMPLETED
 
     db.commit()
 
@@ -192,8 +220,9 @@ def _sanitize_user_message(message: str) -> str:
     return sanitized.strip()
 
 
-def process_message(db: Session, user_id: str, user_message: str) -> str:
-    state = get_or_create_state(db, user_id)
+def process_message(db: Session, user_id: str, user_message: str, state: ConversationState | None = None) -> str:
+    if state is None:
+        state = get_or_create_state(db, user_id)
 
     # Sanitize to prevent prompt injection via control markers
     safe_message = _sanitize_user_message(user_message)

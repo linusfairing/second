@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.dependencies import get_db, get_current_user, check_block
 from app.models.user import User
@@ -75,8 +75,25 @@ def like_user(
 
             match = Match(user1_id=user1, user2_id=user2, compatibility_score=round(score, 4))
             db.add(match)
-            db.flush()
-            match_id = match.id
+            try:
+                db.flush()
+                match_id = match.id
+                is_match = True
+            except IntegrityError:
+                # Concurrent mutual like already created the match — fetch it
+                db.rollback()
+                # Re-add the like (rolled back) and fetch the existing match
+                like = Like(liker_id=current_user.id, liked_id=request.liked_user_id, is_pass=False)
+                db.add(like)
+                db.flush()
+                existing_match = db.query(Match).filter(
+                    Match.user1_id == user1, Match.user2_id == user2
+                ).first()
+                if existing_match:
+                    match_id = existing_match.id
+                    is_match = True
+        else:
+            match_id = existing_match.id
             is_match = True
 
     db.commit()
@@ -129,13 +146,18 @@ def list_matches(
     total = query.count()
     matches_page = query.offset(offset).limit(limit).all()
 
-    # Batch-load all other users in one query to avoid N+1
+    # Batch-load all other users with photos/profiles in one query to avoid N+1
     other_ids = [
         m.user2_id if m.user1_id == current_user.id else m.user1_id
         for m in matches_page
     ]
     if other_ids:
-        others = db.query(User).filter(User.id.in_(other_ids)).all()
+        others = (
+            db.query(User)
+            .options(joinedload(User.photos), joinedload(User.profile))
+            .filter(User.id.in_(other_ids))
+            .all()
+        )
         others_by_id = {u.id: u for u in others}
     else:
         others_by_id = {}
@@ -169,11 +191,14 @@ def unmatch(
     if current_user.id not in (match.user1_id, match.user2_id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your match")
 
-    # Delete associated messages and likes between the two users
+    # Delete associated messages
     db.query(DirectMessage).filter(DirectMessage.match_id == match_id).delete()
+
+    # Convert likes to passes (instead of deleting) to prevent re-liking
     db.query(Like).filter(
         ((Like.liker_id == match.user1_id) & (Like.liked_id == match.user2_id))
         | ((Like.liker_id == match.user2_id) & (Like.liked_id == match.user1_id))
-    ).delete(synchronize_session="fetch")
+    ).update({Like.is_pass: True}, synchronize_session="fetch")
+
     db.delete(match)
     db.commit()

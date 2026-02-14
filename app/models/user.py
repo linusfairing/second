@@ -36,6 +36,7 @@ class User(Base):
     drugs: Mapped[str | None] = mapped_column(String(50), nullable=True)
     hidden_fields: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of field names
     profile_setup_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    token_invalidated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

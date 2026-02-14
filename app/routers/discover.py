@@ -3,7 +3,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, and_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, subqueryload
 
 from app.dependencies import get_db, get_current_user
 from app.models.user import User
@@ -12,6 +12,7 @@ from app.models.match import Like, Match
 from app.models.block import BlockedUser
 from app.schemas.discover import DiscoverResponse
 from app.services.matching_service import calculate_compatibility
+from app.services.chat_service import ONBOARDING_COMPLETED
 from app.utils.profile_builder import build_discover_user, _safe_json_loads
 
 router = APIRouter()
@@ -23,11 +24,10 @@ def _calculate_age(dob: date) -> int:
 
 
 def _safe_date(year: int, month: int, day: int) -> date:
-    """Handle Feb 29 → Feb 28 for non-leap years."""
-    try:
-        return date(year, month, day)
-    except ValueError:
-        return date(year, month, day - 1)
+    """Handle Feb 29 → Feb 28 for non-leap years, and edge cases like day=1."""
+    import calendar
+    max_day = calendar.monthrange(year, month)[1]
+    return date(year, month, min(day, max_day))
 
 
 @router.get("", response_model=DiscoverResponse)
@@ -39,7 +39,7 @@ def discover(
 ):
     # Check onboarding status
     state = db.query(ConversationState).filter(ConversationState.user_id == current_user.id).first()
-    if not state or state.onboarding_status != "completed":
+    if not state or state.onboarding_status != ONBOARDING_COMPLETED:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Complete onboarding chat before discovering users",
@@ -48,17 +48,18 @@ def discover(
     # ── SQL-level filtering ──────────────────────────────────────────────
     q = (
         db.query(User)
-        .options(joinedload(User.profile), joinedload(User.photos))
+        .options(subqueryload(User.profile), subqueryload(User.photos))
         .filter(
             User.id != current_user.id,
             User.is_active == True,  # noqa: E712
+            User.profile_setup_complete == True,  # noqa: E712
         )
     )
 
     # Must have completed onboarding
     q = q.filter(User.id.in_(
         db.query(ConversationState.user_id)
-        .filter(ConversationState.onboarding_status == "completed")
+        .filter(ConversationState.onboarding_status == ONBOARDING_COMPLETED)
     ))
 
     # Exclude liked / passed
@@ -98,21 +99,16 @@ def discover(
         # My age must be inside candidate's [min, max]
         q = q.filter(User.age_range_min <= my_age, User.age_range_max >= my_age)
 
-    candidates = q.all()
-
-    # Deduplicate (joinedload on collections can produce duplicate rows)
-    seen: set[str] = set()
-    unique: list[User] = []
-    for c in candidates:
-        if c.id not in seen:
-            seen.add(c.id)
-            unique.append(c)
+    # Deterministic ordering + SQL-level limit to avoid loading the entire table.
+    # Over-fetch to account for Python-level gender filtering below.
+    sql_limit = (offset + limit) * 3 + 50
+    candidates = q.order_by(User.created_at.desc()).limit(sql_limit).all()
 
     # ── Python-level gender-preference filter (requires JSON parsing) ────
     user_gender_pref = _safe_json_loads(current_user.gender_preference)
 
     scored: list[tuple[User, float]] = []
-    for c in unique:
+    for c in candidates:
         if user_gender_pref and c.gender and c.gender not in user_gender_pref:
             continue
         c_pref = _safe_json_loads(c.gender_preference)

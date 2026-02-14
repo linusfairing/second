@@ -31,6 +31,7 @@ export default function MessagesScreen() {
   const flatListRef = useRef<FlatList>(null);
   const nextIdRef = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  const sendingRef = useRef(false);
 
   useEffect(() => {
     loadMessages();
@@ -64,12 +65,14 @@ export default function MessagesScreen() {
   }
 
   async function pollMessages() {
-    if (!matchId) return;
+    if (!matchId || sendingRef.current) return;
     try {
       const data = await getMessages(matchId);
       setMessages((prev) => {
-        // Only update if there are new messages (avoid re-render for no reason)
-        if (data.length !== prev.length) return data;
+        // Compare by last message ID to detect changes (not just length)
+        const prevLastId = prev.length > 0 ? prev[prev.length - 1].id : null;
+        const newLastId = data.length > 0 ? data[data.length - 1].id : null;
+        if (prevLastId !== newLastId || data.length !== prev.length) return data;
         return prev;
       });
     } catch {
@@ -92,6 +95,7 @@ export default function MessagesScreen() {
     setMessages((prev) => [...prev, optimistic]);
     setInput("");
     setSending(true);
+    sendingRef.current = true;
 
     try {
       const msg = await sendMessage(matchId, text);
@@ -103,6 +107,7 @@ export default function MessagesScreen() {
       setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
     } finally {
       setSending(false);
+      sendingRef.current = false;
     }
   }
 
@@ -134,7 +139,7 @@ export default function MessagesScreen() {
     return (
       <View style={styles.center}>
         <Text style={styles.errorText}>Failed to load messages</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={loadMessages}>
+        <TouchableOpacity style={styles.retryButton} onPress={() => loadMessages()}>
           <Text style={styles.retryText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -144,8 +149,8 @@ export default function MessagesScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={90}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
     >
       <FlatList
         ref={flatListRef}
