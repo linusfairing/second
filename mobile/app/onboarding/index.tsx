@@ -69,7 +69,7 @@ export default function OnboardingScreen() {
       setMessages([msg1]);
       // Show second message after a short delay
       if (introMessages[1]) {
-        await new Promise((r) => setTimeout(r, 1500));
+        await new Promise((r) => setTimeout(r, 3000));
         const msg2: Message = {
           id: `local-${nextIdRef.current++}`,
           role: "assistant",
