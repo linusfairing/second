@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, model_validator
 
 HIDEABLE_FIELDS = frozenset({
     "home_town", "gender", "sexual_orientation", "job_title",
-    "college_university", "languages", "religion", "children",
+    "college_university", "languages", "ethnicity", "religion", "children",
     "family_plans", "drinking", "smoking", "marijuana", "drugs",
 })
 
@@ -21,6 +21,7 @@ class ProfileSetupRequest(BaseModel):
     college_university: str = Field(..., min_length=1, max_length=200)
     education_level: str = Field(..., min_length=1, max_length=100)
     languages: list[str] = Field(..., min_length=1, max_length=20)
+    ethnicity: str = Field(..., min_length=1, max_length=100)
     religion: str = Field(..., min_length=1, max_length=100)
     children: str = Field(..., min_length=1, max_length=100)
     family_plans: str = Field(..., min_length=1, max_length=100)
@@ -53,6 +54,7 @@ class UserUpdate(BaseModel):
     college_university: str | None = Field(None, max_length=200)
     education_level: str | None = Field(None, max_length=100)
     languages: list[str] | None = Field(None, max_length=20)
+    ethnicity: str | None = Field(None, max_length=100)
     religion: str | None = Field(None, max_length=100)
     children: str | None = Field(None, max_length=100)
     family_plans: str | None = Field(None, max_length=100)
@@ -124,6 +126,7 @@ class UserResponse(BaseModel):
     college_university: str | None = None
     education_level: str | None = None
     languages: list[str] | None = None
+    ethnicity: str | None = None
     religion: str | None = None
     children: str | None = None
     family_plans: str | None = None

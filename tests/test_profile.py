@@ -326,6 +326,7 @@ def _setup_payload(**overrides):
         "college_university": "MIT",
         "education_level": "Bachelor's",
         "languages": ["English", "Spanish"],
+        "ethnicity": "Mixed/Multiracial",
         "religion": "None",
         "children": "No",
         "family_plans": "Want someday",

@@ -27,6 +27,7 @@ class User(Base):
     college_university: Mapped[str | None] = mapped_column(String(200), nullable=True)
     education_level: Mapped[str | None] = mapped_column(String(100), nullable=True)
     languages: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    ethnicity: Mapped[str | None] = mapped_column(String(100), nullable=True)
     religion: Mapped[str | None] = mapped_column(String(100), nullable=True)
     children: Mapped[str | None] = mapped_column(String(100), nullable=True)
     family_plans: Mapped[str | None] = mapped_column(String(100), nullable=True)

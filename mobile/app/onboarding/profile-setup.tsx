@@ -30,6 +30,11 @@ const ORIENTATION_OPTIONS = [
 const EDUCATION_OPTIONS = [
   "High school", "Some college", "Associate's", "Bachelor's", "Master's", "PhD", "Trade school", "Other",
 ];
+const ETHNICITY_OPTIONS = [
+  "Asian", "Black/African Descent", "Hispanic/Latino", "Middle Eastern",
+  "Native American", "Pacific Islander", "White/Caucasian", "Mixed/Multiracial",
+  "Other", "Prefer not to say",
+];
 const RELIGION_OPTIONS = [
   "Agnostic", "Atheist", "Buddhist", "Catholic", "Christian", "Hindu",
   "Jewish", "Muslim", "Spiritual", "Other", "Prefer not to say",
@@ -507,6 +512,7 @@ export default function ProfileSetupScreen() {
   const [collegeUniversity, setCollegeUniversity] = useState("");
   const [educationLevel, setEducationLevel] = useState("");
   const [languages, setLanguages] = useState<string[]>([]);
+  const [ethnicity, setEthnicity] = useState("");
   const [religion, setReligion] = useState("");
   const [children, setChildren] = useState("");
   const [familyPlans, setFamilyPlans] = useState("");
@@ -527,6 +533,7 @@ export default function ProfileSetupScreen() {
   const [showOrientation, setShowOrientation] = useState(false);
   const [showEducation, setShowEducation] = useState(false);
   const [showLanguages, setShowLanguages] = useState(false);
+  const [showEthnicity, setShowEthnicity] = useState(false);
   const [showReligion, setShowReligion] = useState(false);
   const [showChildren, setShowChildren] = useState(false);
   const [showFamilyPlans, setShowFamilyPlans] = useState(false);
@@ -555,6 +562,7 @@ export default function ProfileSetupScreen() {
         if (p.college_university) setCollegeUniversity(p.college_university);
         if (p.education_level) setEducationLevel(p.education_level);
         if (p.languages && p.languages.length > 0) setLanguages(p.languages);
+        if (p.ethnicity) setEthnicity(p.ethnicity);
         if (p.religion) setReligion(p.religion);
         if (p.children) setChildren(p.children);
         if (p.family_plans) setFamilyPlans(p.family_plans);
@@ -639,6 +647,7 @@ export default function ProfileSetupScreen() {
     if (!collegeUniversity.trim()) errs.collegeUniversity = "Required";
     if (!educationLevel) errs.educationLevel = "Required";
     if (languages.length === 0) errs.languages = "Select at least one";
+    if (!ethnicity) errs.ethnicity = "Required";
     if (!religion) errs.religion = "Required";
     if (!children) errs.children = "Required";
     if (!familyPlans) errs.familyPlans = "Required";
@@ -671,6 +680,7 @@ export default function ProfileSetupScreen() {
         college_university: collegeUniversity.trim(),
         education_level: educationLevel,
         languages,
+        ethnicity,
         religion,
         children,
         family_plans: familyPlans,
@@ -706,6 +716,7 @@ export default function ProfileSetupScreen() {
     collegeUniversity.trim() &&
     educationLevel &&
     languages.length > 0 &&
+    ethnicity &&
     religion &&
     children &&
     familyPlans &&
@@ -905,6 +916,22 @@ export default function ProfileSetupScreen() {
         </TouchableOpacity>
         {errors.languages && <Text style={styles.errorText}>{errors.languages}</Text>}
 
+        <View style={styles.fieldRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.label}>Ethnicity *</Text>
+          </View>
+          <VisibilityToggle field="ethnicity" hidden={hiddenFields.includes("ethnicity")} onToggle={toggleHidden} />
+        </View>
+        <TouchableOpacity
+          style={[styles.pickerButton, errors.ethnicity && styles.inputError]}
+          onPress={() => setShowEthnicity(true)}
+        >
+          <Text style={ethnicity ? styles.pickerText : styles.pickerPlaceholder}>
+            {ethnicity || "Select ethnicity"}
+          </Text>
+        </TouchableOpacity>
+        {errors.ethnicity && <Text style={styles.errorText}>{errors.ethnicity}</Text>}
+
         {/* ── Section 3: Beliefs & Family ── */}
         <Text style={styles.sectionTitle}>Beliefs & Family</Text>
 
@@ -1084,6 +1111,7 @@ export default function ProfileSetupScreen() {
       <SelectModal visible={showOrientation} title="Sexual Orientation" options={ORIENTATION_OPTIONS} selected={sexualOrientation} onSelect={setSexualOrientation} onClose={() => setShowOrientation(false)} allowOther />
       <SelectModal visible={showEducation} title="Education Level" options={EDUCATION_OPTIONS} selected={educationLevel} onSelect={setEducationLevel} onClose={() => setShowEducation(false)} allowOther />
       <LanguageModal visible={showLanguages} selected={languages} onDone={setLanguages} onClose={() => setShowLanguages(false)} />
+      <SelectModal visible={showEthnicity} title="Ethnicity" options={ETHNICITY_OPTIONS} selected={ethnicity} onSelect={setEthnicity} onClose={() => setShowEthnicity(false)} allowOther />
       <SelectModal visible={showReligion} title="Religion" options={RELIGION_OPTIONS} selected={religion} onSelect={setReligion} onClose={() => setShowReligion(false)} allowOther />
       <SelectModal visible={showChildren} title="Children" options={CHILDREN_OPTIONS} selected={children} onSelect={setChildren} onClose={() => setShowChildren(false)} />
       <SelectModal visible={showFamilyPlans} title="Want Children?" options={WANT_CHILDREN_OPTIONS} selected={familyPlans} onSelect={setFamilyPlans} onClose={() => setShowFamilyPlans(false)} />

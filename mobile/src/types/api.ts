@@ -47,6 +47,7 @@ export interface ProfileSetupRequest {
   college_university: string;
   education_level: string;
   languages: string[];
+  ethnicity: string;
   religion: string;
   children: string;
   family_plans: string;
@@ -74,6 +75,7 @@ export interface UserResponse {
   college_university: string | null;
   education_level: string | null;
   languages: string[] | null;
+  ethnicity: string | null;
   religion: string | null;
   children: string | null;
   family_plans: string | null;
@@ -105,6 +107,7 @@ export interface UserUpdate {
   college_university?: string | null;
   education_level?: string | null;
   languages?: string[] | null;
+  ethnicity?: string | null;
   religion?: string | null;
   children?: string | null;
   family_plans?: string | null;
@@ -164,6 +167,7 @@ export interface DiscoverUserResponse {
   job_title: string | null;
   college_university: string | null;
   languages: string[] | null;
+  ethnicity: string | null;
   religion: string | null;
   children: string | null;
   family_plans: string | null;
