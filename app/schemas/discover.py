@@ -16,6 +16,7 @@ class DiscoverUserResponse(BaseModel):
     job_title: str | None = None
     college_university: str | None = None
     languages: list[str] | None = None
+    ethnicity: str | None = None
     religion: str | None = None
     children: str | None = None
     family_plans: str | None = None

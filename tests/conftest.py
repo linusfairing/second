@@ -114,6 +114,7 @@ def _create_onboarded_user(session, **kwargs):
         college_university=kwargs.get("college_university", "Test University"),
         education_level=kwargs.get("education_level", "Bachelor's"),
         languages=kwargs.get("languages", '["English"]'),
+        ethnicity=kwargs.get("ethnicity", "Mixed/Multiracial"),
         religion=kwargs.get("religion", "None"),
         children=kwargs.get("children", "No"),
         family_plans=kwargs.get("family_plans", "Not sure"),

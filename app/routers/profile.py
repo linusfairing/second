@@ -61,6 +61,7 @@ def setup_profile(
     current_user.college_university = data.college_university
     current_user.education_level = data.education_level
     current_user.languages = json.dumps(data.languages)
+    current_user.ethnicity = data.ethnicity
     current_user.religion = data.religion
     current_user.children = data.children
     current_user.family_plans = data.family_plans
@@ -119,6 +120,8 @@ def update_my_profile(
         current_user.education_level = update.education_level
     if update.languages is not None:
         current_user.languages = json.dumps(update.languages)
+    if update.ethnicity is not None:
+        current_user.ethnicity = update.ethnicity
     if update.religion is not None:
         current_user.religion = update.religion
     if update.children is not None:

@@ -57,6 +57,7 @@ def build_user_response(user: User) -> UserResponse:
         college_university=user.college_university,
         education_level=user.education_level,
         languages=_safe_json_loads(user.languages),
+        ethnicity=user.ethnicity,
         religion=user.religion,
         children=user.children,
         family_plans=user.family_plans,
@@ -95,6 +96,7 @@ def build_discover_user(user: User, score: float) -> DiscoverUserResponse:
         college_university=_visible("college_university", user.college_university),
         # education_level is AI-only, never shown to others
         languages=_visible("languages", _safe_json_loads(user.languages)),
+        ethnicity=_visible("ethnicity", user.ethnicity),
         religion=_visible("religion", user.religion),
         children=_visible("children", user.children),
         family_plans=_visible("family_plans", user.family_plans),
