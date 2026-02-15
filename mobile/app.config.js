@@ -30,6 +30,10 @@ module.exports = {
     },
     ios: {
       supportsTablet: true,
+      infoPlist: {
+        NSLocationWhenInUseUsageDescription:
+          "We use your location to show you profiles nearby.",
+      },
     },
     android: {
       adaptiveIcon: {
@@ -43,7 +47,17 @@ module.exports = {
       favicon: "./assets/favicon.png",
     },
     scheme: "dating-app",
-    plugins: ["expo-router", "expo-secure-store"],
+    plugins: [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          locationWhenInUsePermission:
+            "We use your location to show you profiles nearby.",
+        },
+      ],
+    ],
     extra: {
       lanIp,
     },

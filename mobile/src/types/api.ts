@@ -40,6 +40,9 @@ export interface ProfileSetupRequest {
   date_of_birth: string;
   height_inches: number;
   location: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  max_distance_km?: number;
   home_town: string;
   gender: string;
   sexual_orientation: string;
@@ -67,6 +70,9 @@ export interface UserResponse {
   gender: string | null;
   gender_preference: string[] | null;
   location: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  max_distance_km: number;
   age_range_min: number;
   age_range_max: number;
   height_inches: number | null;
@@ -100,6 +106,9 @@ export interface UserUpdate {
   gender?: string | null;
   gender_preference?: string[] | null;
   location?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  max_distance_km?: number | null;
   age_range_min?: number | null;
   age_range_max?: number | null;
   height_inches?: number | null;
@@ -164,6 +173,7 @@ export interface DiscoverUserResponse {
   date_of_birth: string | null;
   gender: string | null;
   location: string | null;
+  distance_km: number | null;
   height_inches: number | null;
   home_town: string | null;
   sexual_orientation: string | null;

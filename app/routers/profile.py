@@ -54,6 +54,9 @@ def setup_profile(
     current_user.date_of_birth = data.date_of_birth
     current_user.height_inches = data.height_inches
     current_user.location = data.location
+    current_user.latitude = data.latitude
+    current_user.longitude = data.longitude
+    current_user.max_distance_km = data.max_distance_km
     current_user.home_town = data.home_town
     current_user.gender = data.gender
     current_user.sexual_orientation = data.sexual_orientation
@@ -103,6 +106,12 @@ def update_my_profile(
         current_user.gender_preference = json.dumps(update.gender_preference)
     if update.location is not None:
         current_user.location = update.location
+    if update.latitude is not None:
+        current_user.latitude = update.latitude
+    if update.longitude is not None:
+        current_user.longitude = update.longitude
+    if update.max_distance_km is not None:
+        current_user.max_distance_km = update.max_distance_km
     if update.age_range_min is not None:
         current_user.age_range_min = update.age_range_min
     if update.age_range_max is not None:

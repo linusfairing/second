@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
 import { useRouter } from "expo-router";
 import { useAuth } from "../../src/context/AuthContext";
 import { getMyProfile, submitProfileSetup, uploadPhoto, deletePhoto } from "../../src/api/profile";
@@ -508,6 +509,10 @@ export default function ProfileSetupScreen() {
   const [dob, setDob] = useState<Date | null>(null);
   const [heightInches, setHeightInches] = useState<number | null>(null);
   const [location, setLocation] = useState("");
+  const [latitude, setLatitude] = useState<number | null>(null);
+  const [longitude, setLongitude] = useState<number | null>(null);
+  const [maxDistanceKm, setMaxDistanceKm] = useState(50);
+  const [locatingGps, setLocatingGps] = useState(false);
   const [homeTown, setHomeTown] = useState("");
   const [gender, setGender] = useState("");
   const [sexualOrientation, setSexualOrientation] = useState("");
@@ -560,6 +565,9 @@ export default function ProfileSetupScreen() {
         if (p.date_of_birth) setDob(new Date(p.date_of_birth + "T00:00:00"));
         if (p.height_inches) setHeightInches(p.height_inches);
         if (p.location) setLocation(p.location);
+        if (p.latitude != null) setLatitude(p.latitude);
+        if (p.longitude != null) setLongitude(p.longitude);
+        if (p.max_distance_km) setMaxDistanceKm(p.max_distance_km);
         if (p.home_town) setHomeTown(p.home_town);
         if (p.gender) setGender(p.gender);
         if (p.sexual_orientation) setSexualOrientation(p.sexual_orientation);
@@ -582,6 +590,43 @@ export default function ProfileSetupScreen() {
       }
     })();
   }, []);
+
+  async function handleUseMyLocation() {
+    setLocatingGps(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission Needed",
+          "We use your location to show you profiles nearby. Please enable location access in your device settings."
+        );
+        return;
+      }
+      const loc = await Location.getCurrentPositionAsync({});
+      setLatitude(loc.coords.latitude);
+      setLongitude(loc.coords.longitude);
+
+      try {
+        const [geo] = await Location.reverseGeocodeAsync({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+        });
+        if (geo) {
+          const city = geo.city || geo.subregion || "";
+          const region = geo.region || "";
+          const display = [city, region].filter(Boolean).join(", ");
+          if (display) setLocation(display);
+        }
+      } catch {
+        // Reverse geocode failed (offline etc.) — coords still saved
+      }
+    } catch (err) {
+      console.error("GPS error:", err);
+      Alert.alert("Error", "Could not get your location. Please enter it manually.");
+    } finally {
+      setLocatingGps(false);
+    }
+  }
 
   function toggleHidden(field: string) {
     setHiddenFields((prev) =>
@@ -680,6 +725,9 @@ export default function ProfileSetupScreen() {
         date_of_birth: formatDate(dob!),
         height_inches: heightInches!,
         location: location.trim(),
+        latitude,
+        longitude,
+        max_distance_km: maxDistanceKm,
         home_town: homeTown.trim(),
         gender,
         sexual_orientation: sexualOrientation,
@@ -806,14 +854,63 @@ export default function ProfileSetupScreen() {
           <View style={{ flex: 1 }}><Text style={styles.label}>Location *</Text></View>
           <VisibilityStatic label="Always Visible" />
         </View>
-        <TextInput
-          style={[styles.input, errors.location && styles.inputError]}
-          placeholder="City, State"
-          value={location}
-          onChangeText={setLocation}
-          maxLength={100}
-        />
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <TextInput
+            style={[styles.input, { flex: 1 }, errors.location && styles.inputError]}
+            placeholder="City, State"
+            value={location}
+            onChangeText={setLocation}
+            maxLength={100}
+          />
+          <TouchableOpacity
+            style={{
+              backgroundColor: latitude != null ? "#4caf50" : "#e91e63",
+              borderRadius: 10,
+              paddingHorizontal: 12,
+              paddingVertical: 12,
+            }}
+            onPress={handleUseMyLocation}
+            disabled={locatingGps}
+          >
+            {locatingGps ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={{ color: "#fff", fontWeight: "600", fontSize: 13 }}>
+                {latitude != null ? "GPS Set" : "Use GPS"}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
         {errors.location && <Text style={styles.errorText}>{errors.location}</Text>}
+
+        <View style={styles.fieldRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.label}>Max Distance: {maxDistanceKm} km</Text>
+          </View>
+        </View>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+          {[10, 25, 50, 100, 250].map((km) => (
+            <TouchableOpacity
+              key={km}
+              style={{
+                paddingHorizontal: 14,
+                paddingVertical: 8,
+                borderRadius: 20,
+                backgroundColor: maxDistanceKm === km ? "#e91e63" : "#f0f0f0",
+              }}
+              onPress={() => setMaxDistanceKm(km)}
+            >
+              <Text
+                style={{
+                  color: maxDistanceKm === km ? "#fff" : "#555",
+                  fontWeight: "600",
+                }}
+              >
+                {km} km
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
 
         <View style={styles.fieldRow}>
           <View style={{ flex: 1 }}>

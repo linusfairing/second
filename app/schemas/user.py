@@ -15,6 +15,9 @@ class ProfileSetupRequest(BaseModel):
     date_of_birth: date
     height_inches: int = Field(..., ge=48, le=84)
     location: str = Field(..., min_length=1, max_length=100)
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)
+    max_distance_km: int = Field(50, ge=1, le=500)
     home_town: str = Field(..., min_length=1, max_length=200)
     gender: str = Field(..., min_length=1, max_length=30)
     sexual_orientation: str = Field(..., min_length=1, max_length=100)
@@ -47,6 +50,9 @@ class UserUpdate(BaseModel):
     gender: str | None = Field(None, max_length=30)
     gender_preference: list[str] | None = Field(None, max_length=10)
     location: str | None = Field(None, max_length=100)
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)
+    max_distance_km: int | None = Field(None, ge=1, le=500)
     age_range_min: int | None = Field(None, ge=18, le=120)
     age_range_max: int | None = Field(None, ge=18, le=120)
     height_inches: int | None = Field(None, ge=48, le=84)
@@ -120,6 +126,9 @@ class UserResponse(BaseModel):
     gender: str | None = None
     gender_preference: list[str] | None = None
     location: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    max_distance_km: int = 50
     age_range_min: int = 18
     age_range_max: int = 99
     height_inches: int | None = None

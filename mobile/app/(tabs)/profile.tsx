@@ -152,6 +152,7 @@ export default function ProfileScreen() {
         <ProfileField label="Smoking" value={profile.smoking} />
         <ProfileField label="Marijuana" value={profile.marijuana} />
         <ProfileField label="Drugs" value={profile.drugs} />
+        <ProfileField label="Relationship Goals" value={profile.relationship_goals} />
 
         {profile.profile?.bio && (
           <ProfileField label="Bio" value={profile.profile.bio} />
@@ -174,10 +175,6 @@ export default function ProfileScreen() {
             value={profile.profile.personality_traits.join(", ")}
           />
         )}
-        <ProfileField
-          label="Relationship Goals"
-          value={profile.profile?.relationship_goals}
-        />
         <ProfileField
           label="Communication Style"
           value={profile.profile?.communication_style}

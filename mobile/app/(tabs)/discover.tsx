@@ -153,8 +153,12 @@ export default function DiscoverScreen() {
           <Text style={styles.name}>
             {currentUser.display_name || "Anonymous"}
           </Text>
-          {currentUser.location && (
-            <Text style={styles.detail}>{currentUser.location}</Text>
+          {(currentUser.location || currentUser.distance_km != null) && (
+            <Text style={styles.detail}>
+              {currentUser.location}
+              {currentUser.location && currentUser.distance_km != null ? " · " : ""}
+              {currentUser.distance_km != null && `${Math.round(currentUser.distance_km)} km away`}
+            </Text>
           )}
           {currentUser.profile?.bio && (
             <Text style={styles.bio} numberOfLines={3}>

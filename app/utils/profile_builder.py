@@ -1,11 +1,23 @@
 import json
 import logging
+import math
 
 from app.models.user import User
 from app.schemas.user import PhotoResponse, ProfileDataResponse, UserResponse
 from app.schemas.discover import DiscoverUserResponse
 
 logger = logging.getLogger(__name__)
+
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance between two points in kilometers."""
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
+         * math.sin(dlon / 2) ** 2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def _safe_json_loads(value: str | None, fallback=None):
@@ -48,6 +60,9 @@ def build_user_response(user: User) -> UserResponse:
         gender=user.gender,
         gender_preference=gender_pref,
         location=user.location,
+        latitude=user.latitude,
+        longitude=user.longitude,
+        max_distance_km=user.max_distance_km,
         age_range_min=user.age_range_min,
         age_range_max=user.age_range_max,
         height_inches=user.height_inches,
@@ -76,7 +91,7 @@ def build_user_response(user: User) -> UserResponse:
     )
 
 
-def build_discover_user(user: User, score: float) -> DiscoverUserResponse:
+def build_discover_user(user: User, score: float, distance_km: float | None = None) -> DiscoverUserResponse:
     hidden = set(_safe_json_loads(user.hidden_fields, fallback=[]))
 
     def _visible(field_name: str, value):
@@ -90,6 +105,7 @@ def build_discover_user(user: User, score: float) -> DiscoverUserResponse:
         date_of_birth=user.date_of_birth,
         gender=_visible("gender", user.gender),
         location=user.location,
+        distance_km=round(distance_km, 1) if distance_km is not None else None,
         height_inches=user.height_inches,
         home_town=_visible("home_town", user.home_town),
         sexual_orientation=_visible("sexual_orientation", user.sexual_orientation),

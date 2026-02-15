@@ -1,4 +1,4 @@
-import json
+import math
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -13,7 +13,7 @@ from app.models.block import BlockedUser
 from app.schemas.discover import DiscoverResponse
 from app.services.matching_service import calculate_compatibility
 from app.services.chat_service import ONBOARDING_COMPLETED
-from app.utils.profile_builder import build_discover_user, _safe_json_loads
+from app.utils.profile_builder import build_discover_user, _safe_json_loads, haversine_km
 
 router = APIRouter()
 
@@ -79,9 +79,21 @@ def discover(
         ~User.id.in_(db.query(BlockedUser.blocker_id).filter(BlockedUser.blocked_id == current_user.id)),
     )
 
-    # Location (exact-match, skip when either side is NULL)
-    if current_user.location:
-        q = q.filter(or_(User.location.is_(None), User.location == current_user.location))
+    # Rough bounding-box pre-filter for distance (if current user has GPS)
+    if current_user.latitude is not None and current_user.longitude is not None:
+        max_km = current_user.max_distance_km or 50
+        lat_delta = max_km / 111.0
+        cos_lat = math.cos(math.radians(current_user.latitude))
+        lon_delta = max_km / (111.0 * max(cos_lat, 0.01))
+        q = q.filter(or_(
+            User.latitude.is_(None),
+            and_(
+                User.latitude >= current_user.latitude - lat_delta,
+                User.latitude <= current_user.latitude + lat_delta,
+                User.longitude >= current_user.longitude - lon_delta,
+                User.longitude <= current_user.longitude + lon_delta,
+            ),
+        ))
 
     # Bidirectional age-range
     if current_user.date_of_birth:
@@ -100,14 +112,16 @@ def discover(
         q = q.filter(User.age_range_min <= my_age, User.age_range_max >= my_age)
 
     # Deterministic ordering + SQL-level limit to avoid loading the entire table.
-    # Over-fetch to account for Python-level gender filtering below.
-    sql_limit = (offset + limit) * 3 + 50
+    # Over-fetch to account for Python-level gender + distance filtering below.
+    sql_limit = (offset + limit) * 4 + 50
     candidates = q.order_by(User.created_at.desc()).limit(sql_limit).all()
 
     # ── Python-level gender-preference filter (requires JSON parsing) ────
     user_gender_pref = _safe_json_loads(current_user.gender_preference)
 
-    scored: list[tuple[User, float]] = []
+    has_gps = (current_user.latitude is not None and current_user.longitude is not None)
+
+    scored: list[tuple[User, float, float | None]] = []
     for c in candidates:
         if user_gender_pref and c.gender and c.gender not in user_gender_pref:
             continue
@@ -115,13 +129,24 @@ def discover(
         if c_pref and current_user.gender and current_user.gender not in c_pref:
             continue
 
+        # Distance filtering (precise haversine after SQL bounding-box)
+        distance = None
+        if has_gps and c.latitude is not None and c.longitude is not None:
+            distance = haversine_km(
+                current_user.latitude, current_user.longitude,
+                c.latitude, c.longitude,
+            )
+            max_km = current_user.max_distance_km or 50
+            if distance > max_km:
+                continue
+
         score = calculate_compatibility(current_user.profile, c.profile)
-        scored.append((c, score))
+        scored.append((c, score, distance))
 
     # Sort by compatibility and paginate
     scored.sort(key=lambda x: x[1], reverse=True)
     total = len(scored)
     page = scored[offset:offset + limit]
 
-    users = [build_discover_user(c, s) for c, s in page]
+    users = [build_discover_user(c, s, d) for c, s, d in page]
     return DiscoverResponse(users=users, total=total, limit=limit, offset=offset)

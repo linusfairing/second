@@ -152,3 +152,85 @@ class TestDiscoverFiltering:
         r = client.get("/api/v1/discover", headers=auth_headers(token1))
         ids = [u["id"] for u in r.json()["users"]]
         assert user2.id not in ids
+
+
+class TestDiscoverDistanceFiltering:
+    def test_filters_out_far_users(self, client, create_user, auth_headers):
+        """User in NYC should not see user in LA with 50km max distance."""
+        _, token1 = create_user(
+            email="dist1@test.com", gender="male", gender_preference='["female"]',
+            latitude=40.7128, longitude=-74.0060, max_distance_km=50,
+        )
+        user_far, _ = create_user(
+            email="dist2@test.com", gender="female", gender_preference='["male"]',
+            latitude=34.0522, longitude=-118.2437,
+        )
+        user_near, _ = create_user(
+            email="dist3@test.com", gender="female", gender_preference='["male"]',
+            latitude=40.7580, longitude=-73.9855,
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        ids = [u["id"] for u in r.json()["users"]]
+        assert user_near.id in ids
+        assert user_far.id not in ids
+
+    def test_distance_shown_on_card(self, client, create_user, auth_headers):
+        _, token1 = create_user(
+            email="distd1@test.com", gender="male", gender_preference='["female"]',
+            latitude=40.7128, longitude=-74.0060, max_distance_km=100,
+        )
+        user2, _ = create_user(
+            email="distd2@test.com", gender="female", gender_preference='["male"]',
+            latitude=40.7580, longitude=-73.9855,
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        found = [u for u in r.json()["users"] if u["id"] == user2.id]
+        assert len(found) == 1
+        assert found[0]["distance_km"] is not None
+        assert found[0]["distance_km"] < 10
+
+    def test_user_without_gps_still_visible(self, client, create_user, auth_headers):
+        _, token1 = create_user(
+            email="nogps1@test.com", gender="male", gender_preference='["female"]',
+            latitude=40.7128, longitude=-74.0060,
+        )
+        user_no_gps, _ = create_user(
+            email="nogps2@test.com", gender="female", gender_preference='["male"]',
+            latitude=None, longitude=None,
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        ids = [u["id"] for u in r.json()["users"]]
+        assert user_no_gps.id in ids
+
+    def test_searcher_without_gps_sees_everyone(self, client, create_user, auth_headers):
+        _, token1 = create_user(
+            email="nogps3@test.com", gender="male", gender_preference='["female"]',
+            latitude=None, longitude=None,
+        )
+        user_far, _ = create_user(
+            email="nogps4@test.com", gender="female", gender_preference='["male"]',
+            latitude=34.0522, longitude=-118.2437,
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        ids = [u["id"] for u in r.json()["users"]]
+        assert user_far.id in ids
+
+    def test_user_at_boundary_included(self, client, create_user, auth_headers):
+        """User within max distance should be included."""
+        _, token1 = create_user(
+            email="bnd1@test.com", gender="male", gender_preference='["female"]',
+            latitude=40.0, longitude=-74.0, max_distance_km=100,
+        )
+        # ~85km north (within 100km)
+        user_in, _ = create_user(
+            email="bnd2@test.com", gender="female", gender_preference='["male"]',
+            latitude=40.77, longitude=-74.0,
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        ids = [u["id"] for u in r.json()["users"]]
+        assert user_in.id in ids

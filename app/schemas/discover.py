@@ -10,6 +10,7 @@ class DiscoverUserResponse(BaseModel):
     date_of_birth: date | None = None
     gender: str | None = None
     location: str | None = None
+    distance_km: float | None = None
     height_inches: int | None = None
     home_town: str | None = None
     sexual_orientation: str | None = None

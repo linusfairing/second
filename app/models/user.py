@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Boolean, Integer, Date, Text, DateTime, ForeignKey
+from sqlalchemy import String, Boolean, Integer, Float, Date, Text, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -18,6 +18,9 @@ class User(Base):
     gender: Mapped[str | None] = mapped_column(String(50), nullable=True)
     gender_preference: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
     location: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    max_distance_km: Mapped[int] = mapped_column(Integer, default=50)
     age_range_min: Mapped[int] = mapped_column(Integer, default=18)
     age_range_max: Mapped[int] = mapped_column(Integer, default=99)
     height_inches: Mapped[int | None] = mapped_column(Integer, nullable=True)
