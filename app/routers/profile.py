@@ -69,6 +69,7 @@ def setup_profile(
     current_user.smoking = data.smoking
     current_user.marijuana = data.marijuana
     current_user.drugs = data.drugs
+    current_user.relationship_goals = data.relationship_goals
     current_user.hidden_fields = json.dumps(data.hidden_fields)
     current_user.profile_setup_complete = True
 
@@ -136,6 +137,8 @@ def update_my_profile(
         current_user.marijuana = update.marijuana
     if update.drugs is not None:
         current_user.drugs = update.drugs
+    if update.relationship_goals is not None:
+        current_user.relationship_goals = update.relationship_goals
     if update.hidden_fields is not None:
         current_user.hidden_fields = json.dumps(update.hidden_fields)
 

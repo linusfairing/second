@@ -417,6 +417,7 @@ def _setup_payload(**overrides):
         "smoking": "Never",
         "marijuana": "Never",
         "drugs": "Never",
+        "relationship_goals": "Serious relationship",
         "hidden_fields": [],
     }
     base.update(overrides)

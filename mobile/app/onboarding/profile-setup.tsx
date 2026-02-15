@@ -45,6 +45,9 @@ const DRINKING_OPTIONS = ["No", "Socially", "Yes please!"];
 const SMOKING_OPTIONS = ["No", "Socially", "Yes", "Vape Only"];
 const MARIJUANA_OPTIONS = ["Yes", "Sometimes", "No"];
 const DRUGS_OPTIONS = ["Yes", "Sometimes", "No"];
+const RELATIONSHIP_GOALS_OPTIONS = [
+  "Life partner", "Serious relationship", "Casual dating", "Just seeing what happens",
+];
 
 const HEIGHT_OPTIONS: { label: string; value: number }[] = [];
 for (let inches = 48; inches <= 84; inches++) {
@@ -520,6 +523,7 @@ export default function ProfileSetupScreen() {
   const [smoking, setSmoking] = useState("");
   const [marijuana, setMarijuana] = useState("");
   const [drugs, setDrugs] = useState("");
+  const [relationshipGoals, setRelationshipGoals] = useState("");
   const [hiddenFields, setHiddenFields] = useState<string[]>([]);
 
   // Photos
@@ -541,6 +545,7 @@ export default function ProfileSetupScreen() {
   const [showSmoking, setShowSmoking] = useState(false);
   const [showMarijuana, setShowMarijuana] = useState(false);
   const [showDrugs, setShowDrugs] = useState(false);
+  const [showRelationshipGoals, setShowRelationshipGoals] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -570,6 +575,7 @@ export default function ProfileSetupScreen() {
         if (p.smoking) setSmoking(p.smoking);
         if (p.marijuana) setMarijuana(p.marijuana);
         if (p.drugs) setDrugs(p.drugs);
+        if (p.relationship_goals) setRelationshipGoals(p.relationship_goals);
         if (p.hidden_fields) setHiddenFields(p.hidden_fields);
       } catch {
         // Ignore — user may not have a profile yet
@@ -655,6 +661,7 @@ export default function ProfileSetupScreen() {
     if (!smoking) errs.smoking = "Required";
     if (!marijuana) errs.marijuana = "Required";
     if (!drugs) errs.drugs = "Required";
+    if (!relationshipGoals) errs.relationshipGoals = "Required";
     if (photos.length < 3) errs.photos = `Upload at least 3 photos (${photos.length}/3)`;
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -688,6 +695,7 @@ export default function ProfileSetupScreen() {
         smoking,
         marijuana,
         drugs,
+        relationship_goals: relationshipGoals,
         hidden_fields: hiddenFields,
       };
 
@@ -724,6 +732,7 @@ export default function ProfileSetupScreen() {
     smoking &&
     marijuana &&
     drugs &&
+    relationshipGoals &&
     photos.length >= 3;
 
   return (
@@ -983,6 +992,22 @@ export default function ProfileSetupScreen() {
         </TouchableOpacity>
         {errors.familyPlans && <Text style={styles.errorText}>{errors.familyPlans}</Text>}
 
+        <View style={styles.fieldRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.label}>Relationship Goals *</Text>
+          </View>
+          <VisibilityToggle field="relationship_goals" hidden={hiddenFields.includes("relationship_goals")} onToggle={toggleHidden} />
+        </View>
+        <TouchableOpacity
+          style={[styles.pickerButton, errors.relationshipGoals && styles.inputError]}
+          onPress={() => setShowRelationshipGoals(true)}
+        >
+          <Text style={relationshipGoals ? styles.pickerText : styles.pickerPlaceholder}>
+            {relationshipGoals || "Select"}
+          </Text>
+        </TouchableOpacity>
+        {errors.relationshipGoals && <Text style={styles.errorText}>{errors.relationshipGoals}</Text>}
+
         {/* ── Section 4: Lifestyle ── */}
         <Text style={styles.sectionTitle}>Lifestyle</Text>
 
@@ -1119,6 +1144,7 @@ export default function ProfileSetupScreen() {
       <SelectModal visible={showSmoking} title="Smoking" options={SMOKING_OPTIONS} selected={smoking} onSelect={setSmoking} onClose={() => setShowSmoking(false)} />
       <SelectModal visible={showMarijuana} title="Marijuana" options={MARIJUANA_OPTIONS} selected={marijuana} onSelect={setMarijuana} onClose={() => setShowMarijuana(false)} />
       <SelectModal visible={showDrugs} title="Drugs" options={DRUGS_OPTIONS} selected={drugs} onSelect={setDrugs} onClose={() => setShowDrugs(false)} />
+      <SelectModal visible={showRelationshipGoals} title="Relationship Goals" options={RELATIONSHIP_GOALS_OPTIONS} selected={relationshipGoals} onSelect={setRelationshipGoals} onClose={() => setShowRelationshipGoals(false)} />
     </SafeAreaView>
   );
 }

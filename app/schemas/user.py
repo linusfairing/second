@@ -6,6 +6,7 @@ HIDEABLE_FIELDS = frozenset({
     "home_town", "gender", "sexual_orientation", "job_title",
     "college_university", "languages", "ethnicity", "religion", "children",
     "family_plans", "drinking", "smoking", "marijuana", "drugs",
+    "relationship_goals",
 })
 
 
@@ -29,6 +30,7 @@ class ProfileSetupRequest(BaseModel):
     smoking: str = Field(..., min_length=1, max_length=50)
     marijuana: str = Field(..., min_length=1, max_length=50)
     drugs: str = Field(..., min_length=1, max_length=50)
+    relationship_goals: str = Field(..., min_length=1, max_length=100)
     hidden_fields: list[str] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
@@ -62,6 +64,7 @@ class UserUpdate(BaseModel):
     smoking: str | None = Field(None, max_length=50)
     marijuana: str | None = Field(None, max_length=50)
     drugs: str | None = Field(None, max_length=50)
+    relationship_goals: str | None = Field(None, max_length=100)
     hidden_fields: list[str] | None = Field(None, max_length=20)
 
     @model_validator(mode="after")
@@ -134,6 +137,7 @@ class UserResponse(BaseModel):
     smoking: str | None = None
     marijuana: str | None = None
     drugs: str | None = None
+    relationship_goals: str | None = None
     hidden_fields: list[str] | None = None
     profile_setup_complete: bool = False
     is_active: bool = True

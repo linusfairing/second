@@ -1,0 +1,12 @@
+{
+  "forwardPorts": [8000, 8081],
+  "portsAttributes": {
+    "8000": {
+      "label": "Backend API",
+      "visibility": "public"
+    },
+    "8081": {
+      "label": "Expo Metro"
+    }
+  }
+}

@@ -122,6 +122,7 @@ def _create_onboarded_user(session, **kwargs):
         smoking=kwargs.get("smoking", "Never"),
         marijuana=kwargs.get("marijuana", "Never"),
         drugs=kwargs.get("drugs", "Never"),
+        relationship_goals=kwargs.get("relationship_goals", "Serious relationship"),
         hidden_fields=kwargs.get("hidden_fields", "[]"),
         profile_setup_complete=kwargs.get("profile_setup_complete", True),
     )

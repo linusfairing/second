@@ -55,6 +55,7 @@ export interface ProfileSetupRequest {
   smoking: string;
   marijuana: string;
   drugs: string;
+  relationship_goals: string;
   hidden_fields: string[];
 }
 
@@ -83,6 +84,7 @@ export interface UserResponse {
   smoking: string | null;
   marijuana: string | null;
   drugs: string | null;
+  relationship_goals: string | null;
   hidden_fields: string[] | null;
   profile_setup_complete: boolean;
   is_active: boolean;
@@ -115,6 +117,7 @@ export interface UserUpdate {
   smoking?: string | null;
   marijuana?: string | null;
   drugs?: string | null;
+  relationship_goals?: string | null;
   hidden_fields?: string[] | null;
 }
 
@@ -175,6 +178,7 @@ export interface DiscoverUserResponse {
   smoking: string | null;
   marijuana: string | null;
   drugs: string | null;
+  relationship_goals: string | null;
   photos: PhotoResponse[];
   profile: ProfileDataResponse | null;
   compatibility_score: number;

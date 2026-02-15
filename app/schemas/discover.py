@@ -24,6 +24,7 @@ class DiscoverUserResponse(BaseModel):
     smoking: str | None = None
     marijuana: str | None = None
     drugs: str | None = None
+    relationship_goals: str | None = None
     photos: list[PhotoResponse] = []
     profile: ProfileDataResponse | None = None
     compatibility_score: float = 0.0
