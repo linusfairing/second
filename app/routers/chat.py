@@ -91,4 +91,5 @@ def get_chat_status(
         onboarding_status=state.onboarding_status,
         profile_completeness=completeness,
         profile_setup_complete=bool(current_user.profile_setup_complete),
+        dating_preferences_complete=bool(current_user.dating_preferences_complete),
     )

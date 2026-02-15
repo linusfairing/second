@@ -620,3 +620,113 @@ class TestProfileSetup:
         r = client.post("/api/v1/profile/me/setup", json=payload, headers=auth_headers(token))
         assert r.status_code == 200
         assert r.json()["display_name"] == "Updated Name"
+
+
+class TestDatingPreferences:
+    def test_update_height_pref(self, client, create_user, auth_headers):
+        _, token = create_user(email="dp1@test.com")
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"height_pref_min": 60, "height_pref_max": 72},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert r.json()["height_pref_min"] == 60
+        assert r.json()["height_pref_max"] == 72
+
+    def test_height_pref_min_exceeds_max(self, client, create_user, auth_headers):
+        _, token = create_user(email="dp2@test.com")
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"height_pref_min": 72, "height_pref_max": 60},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 422
+
+    def test_religion_preference_roundtrip(self, client, create_user, auth_headers):
+        _, token = create_user(email="dp3@test.com")
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"religion_preference": ["Christian", "Catholic"]},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert set(r.json()["religion_preference"]) == {"Christian", "Catholic"}
+
+    def test_dating_preferences_complete_flag(self, client, create_user, auth_headers):
+        _, token = create_user(email="dp4@test.com")
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"dating_preferences_complete": True},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert r.json()["dating_preferences_complete"] is True
+
+    def test_dating_preferences_complete_in_chat_status(self, client, create_user, auth_headers):
+        _, token = create_user(email="dp5@test.com", dating_preferences_complete=True)
+        r = client.get("/api/v1/chat/status", headers=auth_headers(token))
+        assert r.status_code == 200
+        assert r.json()["dating_preferences_complete"] is True
+
+    def test_height_pref_partial_update_validation(self, client, create_user, auth_headers):
+        """Setting min alone, then max below it should fail."""
+        _, token = create_user(email="dp6@test.com")
+        # Set height_pref_min first
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"height_pref_min": 70},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        # Now set max below the existing min
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"height_pref_max": 60},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 422
+        assert "height_pref_min" in r.json()["detail"].lower()
+
+    def test_clear_height_pref_to_null(self, client, create_user, auth_headers):
+        """Sending null for height prefs should clear them."""
+        _, token = create_user(email="dp7@test.com")
+        # Set height prefs
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"height_pref_min": 60, "height_pref_max": 72},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert r.json()["height_pref_min"] == 60
+
+        # Clear them by sending null
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"height_pref_min": None, "height_pref_max": None},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert r.json()["height_pref_min"] is None
+        assert r.json()["height_pref_max"] is None
+
+    def test_clear_religion_preference_to_null(self, client, create_user, auth_headers):
+        """Sending null for religion_preference should clear it."""
+        _, token = create_user(email="dp8@test.com")
+        # Set religion pref
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"religion_preference": ["Christian"]},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert r.json()["religion_preference"] == ["Christian"]
+
+        # Clear it by sending null
+        r = client.put(
+            "/api/v1/profile/me",
+            json={"religion_preference": None},
+            headers=auth_headers(token),
+        )
+        assert r.status_code == 200
+        assert r.json()["religion_preference"] is None

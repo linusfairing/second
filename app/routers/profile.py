@@ -150,11 +150,31 @@ def update_my_profile(
         current_user.relationship_goals = update.relationship_goals
     if update.hidden_fields is not None:
         current_user.hidden_fields = json.dumps(update.hidden_fields)
+    # height_pref and religion_preference are clearable (null = no filter),
+    # so use model_fields_set to distinguish "sent as null" from "not sent".
+    if "height_pref_min" in update.model_fields_set:
+        current_user.height_pref_min = update.height_pref_min
+    if "height_pref_max" in update.model_fields_set:
+        current_user.height_pref_max = update.height_pref_max
+    if "religion_preference" in update.model_fields_set:
+        current_user.religion_preference = (
+            json.dumps(update.religion_preference) if update.religion_preference is not None else None
+        )
+    if update.dating_preferences_complete is not None:
+        current_user.dating_preferences_complete = update.dating_preferences_complete
 
     if current_user.age_range_min > current_user.age_range_max:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="age_range_min must not exceed age_range_max",
+        )
+
+    if (current_user.height_pref_min is not None
+            and current_user.height_pref_max is not None
+            and current_user.height_pref_min > current_user.height_pref_max):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="height_pref_min must not exceed height_pref_max",
         )
 
     db.commit()

@@ -92,6 +92,10 @@ export interface UserResponse {
   drugs: string | null;
   relationship_goals: string | null;
   hidden_fields: string[] | null;
+  height_pref_min: number | null;
+  height_pref_max: number | null;
+  religion_preference: string[] | null;
+  dating_preferences_complete: boolean;
   profile_setup_complete: boolean;
   is_active: boolean;
   photos: PhotoResponse[];
@@ -128,6 +132,10 @@ export interface UserUpdate {
   drugs?: string | null;
   relationship_goals?: string | null;
   hidden_fields?: string[] | null;
+  height_pref_min?: number | null;
+  height_pref_max?: number | null;
+  religion_preference?: string[] | null;
+  dating_preferences_complete?: boolean;
 }
 
 export interface ProfileUpdate {
@@ -164,6 +172,7 @@ export interface ChatStatusResponse {
   onboarding_status: string;
   profile_completeness: number;
   profile_setup_complete: boolean;
+  dating_preferences_complete: boolean;
 }
 
 // Discover

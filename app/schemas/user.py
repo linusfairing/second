@@ -72,6 +72,10 @@ class UserUpdate(BaseModel):
     drugs: str | None = Field(None, max_length=50)
     relationship_goals: str | None = Field(None, max_length=100)
     hidden_fields: list[str] | None = Field(None, max_length=20)
+    height_pref_min: int | None = Field(None, ge=48, le=84)
+    height_pref_max: int | None = Field(None, ge=48, le=84)
+    religion_preference: list[str] | None = Field(None, max_length=20)
+    dating_preferences_complete: bool | None = None
 
     @model_validator(mode="after")
     def check_age_range(self):
@@ -86,6 +90,13 @@ class UserUpdate(BaseModel):
             invalid = set(self.hidden_fields) - HIDEABLE_FIELDS
             if invalid:
                 raise ValueError(f"Invalid hidden_fields: {sorted(invalid)}. Allowed: {sorted(HIDEABLE_FIELDS)}")
+        return self
+
+    @model_validator(mode="after")
+    def check_height_pref_range(self):
+        if self.height_pref_min is not None and self.height_pref_max is not None:
+            if self.height_pref_min > self.height_pref_max:
+                raise ValueError("height_pref_min must not exceed height_pref_max")
         return self
 
 
@@ -148,6 +159,10 @@ class UserResponse(BaseModel):
     drugs: str | None = None
     relationship_goals: str | None = None
     hidden_fields: list[str] | None = None
+    height_pref_min: int | None = None
+    height_pref_max: int | None = None
+    religion_preference: list[str] | None = None
+    dating_preferences_complete: bool = False
     profile_setup_complete: bool = False
     is_active: bool = True
     photos: list[PhotoResponse] = []

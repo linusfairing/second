@@ -234,3 +234,86 @@ class TestDiscoverDistanceFiltering:
         r = client.get("/api/v1/discover", headers=auth_headers(token1))
         ids = [u["id"] for u in r.json()["users"]]
         assert user_in.id in ids
+
+
+class TestDiscoverHeightFiltering:
+    def test_height_pref_filters_candidates(self, client, create_user, auth_headers):
+        """User with height pref 60-72 should see 66" candidate, not 58"."""
+        _, token1 = create_user(
+            email="hf1@test.com", gender="male", gender_preference='["female"]',
+            height_pref_min=60, height_pref_max=72,
+        )
+        user_in, _ = create_user(
+            email="hf2@test.com", gender="female", gender_preference='["male"]',
+            height_inches=66,
+        )
+        user_out, _ = create_user(
+            email="hf3@test.com", gender="female", gender_preference='["male"]',
+            height_inches=58,
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        ids = [u["id"] for u in r.json()["users"]]
+        assert user_in.id in ids
+        assert user_out.id not in ids
+
+    def test_no_height_pref_sees_everyone(self, client, create_user, auth_headers):
+        """User with no height preference should see all candidates."""
+        _, token1 = create_user(
+            email="hf4@test.com", gender="male", gender_preference='["female"]',
+        )
+        user_short, _ = create_user(
+            email="hf5@test.com", gender="female", gender_preference='["male"]',
+            height_inches=50,
+        )
+        user_tall, _ = create_user(
+            email="hf6@test.com", gender="female", gender_preference='["male"]',
+            height_inches=80,
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        ids = [u["id"] for u in r.json()["users"]]
+        assert user_short.id in ids
+        assert user_tall.id in ids
+
+
+class TestDiscoverReligionFiltering:
+    def test_religion_pref_filters_candidates(self, client, create_user, auth_headers):
+        """User with religion pref [Christian, Catholic] sees Catholic, not Muslim."""
+        import json
+        _, token1 = create_user(
+            email="rf1@test.com", gender="male", gender_preference='["female"]',
+            religion_preference=json.dumps(["Christian", "Catholic"]),
+        )
+        user_in, _ = create_user(
+            email="rf2@test.com", gender="female", gender_preference='["male"]',
+            religion="Catholic",
+        )
+        user_out, _ = create_user(
+            email="rf3@test.com", gender="female", gender_preference='["male"]',
+            religion="Muslim",
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        ids = [u["id"] for u in r.json()["users"]]
+        assert user_in.id in ids
+        assert user_out.id not in ids
+
+    def test_no_religion_pref_sees_everyone(self, client, create_user, auth_headers):
+        """User with no religion preference sees all candidates."""
+        _, token1 = create_user(
+            email="rf4@test.com", gender="male", gender_preference='["female"]',
+        )
+        user_a, _ = create_user(
+            email="rf5@test.com", gender="female", gender_preference='["male"]',
+            religion="Muslim",
+        )
+        user_b, _ = create_user(
+            email="rf6@test.com", gender="female", gender_preference='["male"]',
+            religion="Christian",
+        )
+
+        r = client.get("/api/v1/discover", headers=auth_headers(token1))
+        ids = [u["id"] for u in r.json()["users"]]
+        assert user_a.id in ids
+        assert user_b.id in ids

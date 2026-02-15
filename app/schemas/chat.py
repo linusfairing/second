@@ -28,3 +28,4 @@ class ChatStatusResponse(BaseModel):
     onboarding_status: str
     profile_completeness: float
     profile_setup_complete: bool = False
+    dating_preferences_complete: bool = False

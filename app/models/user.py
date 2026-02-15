@@ -24,6 +24,10 @@ class User(Base):
     age_range_min: Mapped[int] = mapped_column(Integer, default=18)
     age_range_max: Mapped[int] = mapped_column(Integer, default=99)
     height_inches: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height_pref_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height_pref_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    religion_preference: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    dating_preferences_complete: Mapped[bool] = mapped_column(Boolean, default=False)
     home_town: Mapped[str | None] = mapped_column(String(200), nullable=True)
     sexual_orientation: Mapped[str | None] = mapped_column(String(100), nullable=True)
     job_title: Mapped[str | None] = mapped_column(String(200), nullable=True)

@@ -753,6 +753,7 @@ export default function ProfileSetupScreen() {
         return;
       }
       await checkOnboarding();
+      router.replace("/onboarding/dating-preferences");
     } catch (err: any) {
       Alert.alert("Error", getErrorMessage(err, "Failed to save profile. Please try again."));
     } finally {

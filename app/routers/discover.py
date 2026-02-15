@@ -112,12 +112,13 @@ def discover(
         q = q.filter(User.age_range_min <= my_age, User.age_range_max >= my_age)
 
     # Deterministic ordering + SQL-level limit to avoid loading the entire table.
-    # Over-fetch to account for Python-level gender + distance filtering below.
-    sql_limit = (offset + limit) * 4 + 50
+    # Over-fetch to account for Python-level gender + distance + height/religion filtering.
+    sql_limit = (offset + limit) * 5 + 50
     candidates = q.order_by(User.created_at.desc()).limit(sql_limit).all()
 
     # ── Python-level gender-preference filter (requires JSON parsing) ────
     user_gender_pref = _safe_json_loads(current_user.gender_preference)
+    user_religion_pref = _safe_json_loads(current_user.religion_preference)
 
     has_gps = (current_user.latitude is not None and current_user.longitude is not None)
 
@@ -138,6 +139,18 @@ def discover(
             )
             max_km = current_user.max_distance_km or 50
             if distance > max_km:
+                continue
+
+        # Height preference filter
+        if (current_user.height_pref_min is not None
+                and current_user.height_pref_max is not None
+                and c.height_inches is not None):
+            if c.height_inches < current_user.height_pref_min or c.height_inches > current_user.height_pref_max:
+                continue
+
+        # Religion preference filter
+        if user_religion_pref and len(user_religion_pref) > 0:
+            if not c.religion or c.religion not in user_religion_pref:
                 continue
 
         score = calculate_compatibility(current_user.profile, c.profile)

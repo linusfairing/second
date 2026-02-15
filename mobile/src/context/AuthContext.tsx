@@ -8,6 +8,7 @@ interface AuthState {
   userId: string | null;
   isLoading: boolean;
   profileSetupComplete: boolean;
+  datingPreferencesComplete: boolean;
   onboardingComplete: boolean;
   signIn: (token: string, userId: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -19,6 +20,7 @@ const AuthContext = createContext<AuthState>({
   userId: null,
   isLoading: true,
   profileSetupComplete: false,
+  datingPreferencesComplete: false,
   onboardingComplete: false,
   signIn: async () => {},
   signOut: async () => {},
@@ -34,6 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userId, setUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [profileSetupComplete, setProfileSetupComplete] = useState(false);
+  const [datingPreferencesComplete, setDatingPreferencesComplete] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
 
   useEffect(() => {
@@ -41,6 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setToken(null);
       setUserId(null);
       setProfileSetupComplete(false);
+      setDatingPreferencesComplete(false);
       setOnboardingComplete(false);
     });
     restoreSession();
@@ -64,6 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await SecureStore.deleteItemAsync("token");
       await SecureStore.deleteItemAsync("userId");
       await SecureStore.deleteItemAsync("profileSetupComplete");
+      await SecureStore.deleteItemAsync("datingPreferencesComplete");
       await SecureStore.deleteItemAsync("onboardingComplete");
     } finally {
       setIsLoading(false);
@@ -74,18 +79,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const status = await getChatStatus();
       const setupDone = !!status.profile_setup_complete;
+      const datingDone = !!status.dating_preferences_complete;
       const completed = status.onboarding_status === "completed";
       setProfileSetupComplete(setupDone);
+      setDatingPreferencesComplete(datingDone);
       setOnboardingComplete(completed);
       await SecureStore.setItemAsync("profileSetupComplete", setupDone ? "1" : "0");
+      await SecureStore.setItemAsync("datingPreferencesComplete", datingDone ? "1" : "0");
       await SecureStore.setItemAsync("onboardingComplete", completed ? "1" : "0");
     } catch (err: any) {
       // Auth error — re-throw so restoreSession can clear stale tokens
       if (err?.response?.status === 401) throw err;
       // Network failed — fall back to cached values
       const cachedSetup = await SecureStore.getItemAsync("profileSetupComplete");
+      const cachedDating = await SecureStore.getItemAsync("datingPreferencesComplete");
       const cachedOnboarding = await SecureStore.getItemAsync("onboardingComplete");
       setProfileSetupComplete(cachedSetup === "1");
+      setDatingPreferencesComplete(cachedDating === "1");
       setOnboardingComplete(cachedOnboarding === "1");
     }
   }
@@ -106,10 +116,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.deleteItemAsync("token");
     await SecureStore.deleteItemAsync("userId");
     await SecureStore.deleteItemAsync("profileSetupComplete");
+    await SecureStore.deleteItemAsync("datingPreferencesComplete");
     await SecureStore.deleteItemAsync("onboardingComplete");
     setToken(null);
     setUserId(null);
     setProfileSetupComplete(false);
+    setDatingPreferencesComplete(false);
     setOnboardingComplete(false);
   }
 
@@ -124,6 +136,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         userId,
         isLoading,
         profileSetupComplete,
+        datingPreferencesComplete,
         onboardingComplete,
         signIn,
         signOut,

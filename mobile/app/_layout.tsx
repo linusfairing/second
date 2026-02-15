@@ -9,7 +9,7 @@ import { AuthProvider, useAuth } from "../src/context/AuthContext";
 SplashScreen.hideAsync().catch(() => {});
 
 function AuthGuard() {
-  const { token, isLoading, profileSetupComplete, onboardingComplete } = useAuth();
+  const { token, isLoading, profileSetupComplete, datingPreferencesComplete, onboardingComplete } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
@@ -26,12 +26,15 @@ function AuthGuard() {
     } else if (!profileSetupComplete) {
       if (!inOnboarding || secondSegment !== "profile-setup")
         router.replace("/onboarding/profile-setup");
+    } else if (!datingPreferencesComplete) {
+      if (!inOnboarding || secondSegment !== "dating-preferences")
+        router.replace("/onboarding/dating-preferences");
     } else if (!onboardingComplete) {
       if (!inOnboarding) router.replace("/onboarding");
     } else {
       if (inAuth || inOnboarding) router.replace("/(tabs)/discover");
     }
-  }, [token, isLoading, profileSetupComplete, onboardingComplete, segments]);
+  }, [token, isLoading, profileSetupComplete, datingPreferencesComplete, onboardingComplete, segments]);
 
   if (isLoading) {
     return (

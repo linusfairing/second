@@ -127,6 +127,10 @@ def _create_onboarded_user(session, **kwargs):
         drugs=kwargs.get("drugs", "Never"),
         relationship_goals=kwargs.get("relationship_goals", "Serious relationship"),
         hidden_fields=kwargs.get("hidden_fields", "[]"),
+        height_pref_min=kwargs.get("height_pref_min", None),
+        height_pref_max=kwargs.get("height_pref_max", None),
+        religion_preference=kwargs.get("religion_preference", None),
+        dating_preferences_complete=kwargs.get("dating_preferences_complete", False),
         profile_setup_complete=kwargs.get("profile_setup_complete", True),
     )
     session.add(user)
